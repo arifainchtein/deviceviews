@@ -266,10 +266,7 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 		}
 	})();
 
-	var detailHtml = name === "Chinampa" ? buildChinampaContent(telepathon, safeId) :
-		deviceType === "Daffodil" ? buildDaffodilContent(telepathon) :
-		deviceType === "Langley" ? buildLangleyContent(telepathon) :
-		buildTelepathonDetailContent(telepathon);
+	var detailHtml = buildTelepathonDetailView(telepathon, idSuffix, deviceType);
 
 	function fetchChinampaLevelChart() {
 		function numOrNaN(dw) { return dw ? parseFloat(dw["Value"]) : NaN; }
@@ -417,4 +414,27 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 	html += '</div>';
 	html += '</div>';
 	return html;
+}
+
+// The detail view on its own (2026-11-01): what the card's popup shows (Daffodil, Langley, Chinampa or the
+// generic one), as HTML, for a host that shows it as the page itself (devices.digitalstables.com/d/<serial
+// number>) instead of in a popup. The card uses it too, so the page and the popup are always the same.
+function buildTelepathonDetailView(telepathon, idSuffix, deviceType) {
+	var name = telepathon["Name"];
+	var safeId = name.replace(/[^a-zA-Z0-9]/g, '_') + (idSuffix || '');
+	if (deviceType === undefined) {
+		deviceType = DeviceViewsHost.deviceType(name) || '';
+		var denes = telepathon["Denes"] || [];
+		for (var di = 0; di < denes.length && !deviceType; di++) {
+			if (denes[di]["Name"] !== "Configuration") continue;
+			var cws = denes[di]["DeneWords"] || [];
+			for (var ci = 0; ci < cws.length; ci++) {
+				if (cws[ci]["Name"] === "Device Type Id") { deviceType = cws[ci]["Value"]; break; }
+			}
+		}
+	}
+	return name === "Chinampa" ? buildChinampaContent(telepathon, safeId) :
+		deviceType === "Daffodil" ? buildDaffodilContent(telepathon) :
+		deviceType === "Langley" ? buildLangleyContent(telepathon) :
+		buildTelepathonDetailContent(telepathon);
 }
