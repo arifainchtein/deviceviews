@@ -1,0 +1,55 @@
+/* deviceviews (2026-10-31): the styles the cards, popups and charts rely on, from the Teleonome page's own
+   <style> (teleonomewebapp index.html), for hosts other than the Teleonome (which has them already). Load
+   after the Bootswatch "Paper" 3.3.7 theme the Teleonome uses. The Teleonome's global "path" rule is scoped
+   to the charts here, so it cannot touch anything else on the page (maps). */
+
+#telepathon-graph, .graph-container {
+	width: 100%;
+	max-width: 100%;
+	overflow-x: hidden;
+}
+
+#dataDisplay {
+	font-family: monospace;
+	font-size: 14px;
+	padding: 10px;
+	background-color: #f8f9fa;
+	border: 1px solid #dee2e6;
+	border-radius: 4px;
+	margin-top: 15px;
+	word-wrap: break-word;
+}
+
+@media (max-width: 576px) {
+	#dataDisplay {
+		font-size: 12px;
+	}
+}
+
+.modal-dialog {
+	margin: 0.5rem;
+}
+
+/* centre the popups, as on the Teleonome */
+body.modal-open .modal.in {
+	display: flex !important;
+	height: 100%;
+}
+
+body.modal-open .modal.in .modal-dialog {
+	margin: auto;
+}
+
+/* the charts (D3): lines, and axes */
+#telepathon-graph path, [id^="chinampa-level-chart"] path {
+	stroke: steelblue;
+	stroke-width: 2;
+	fill: none;
+}
+
+.axis path, .axis line {
+	fill: none;
+	stroke: grey;
+	stroke-width: 1;
+	shape-rendering: crispEdges;
+}
