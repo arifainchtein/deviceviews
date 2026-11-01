@@ -43,7 +43,7 @@ function computeTelepathonAgeStatus(telepathon) {
 		return ageSeconds < green ? '#27ae60' : (ageSeconds < yellow ? '#f39c12' : '#e74c3c');
 	}
 	var statusColor;
-	if (name === "Chinampa") {
+	if (name === "Chinampa" || deviceType === "Chinampa") {
 		statusColor = rangeColor(120, 240);
 	} else if (deviceType === "Daffodil" || deviceType === "Langley") {
 		if (opNum === "4") {
@@ -137,7 +137,7 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 	}
 
 	var statusColor;
-	if (name === "Chinampa") {
+	if (name === "Chinampa" || deviceType === "Chinampa") {
 		statusColor = rangeColor(120, 240);
 	} else if (deviceType === "Daffodil" || deviceType === "Langley") {
 		if (opNum === "4") {
@@ -156,7 +156,7 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 	// Build device-specific status info line
 	var statusExtra = '';
 	var opModeHtml = '';
-	if (name === "Chinampa") {
+	if (name === "Chinampa" || deviceType === "Chinampa") {
 		var alertCodeDW = findPW("Alert Code");
 		var ac = alertCodeDW ? parseInt(alertCodeDW["Value"]) : 99;
 		var alertMsgs = {0:"Initializing...",1:"Fish Tank Data Stale",2:"Sump Trough Stale",3:"FT & Sump Data Stale",4:"Solenoid Open / Low Flow",5:"Sump Level Too Low",6:"System Low In Water"};
@@ -234,7 +234,7 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 			return '<span style="display:inline-block;width:25px;height:25px;background:' + hex +
 				';border:1px solid #999;border-radius:3px;vertical-align:middle;"' + titleAttr + '></span>';
 		}
-		if (name === "Chinampa") {
+		if (name === "Chinampa" || deviceType === "Chinampa") {
 			var fishFlowValDW = findPW("Fish Tank Outflow Flow Rate");
 			var fishFlowValStr = fishFlowValDW ? (fishFlowValDW["Value"] + (fishFlowValDW["Units"] ? ' ' + fishFlowValDW["Units"] : '')) : '';
 			parts.push('Fish: ' + (fishFlowValStr ? fishFlowValStr + ' ' : '') + levelSquare(fishColorHex, findPW("Fish Tank Measured Height")));
@@ -284,7 +284,7 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 			'<button type="button" class="btn btn-default" onclick="closeModal(\'' + modalId + '\')">Close</button>' +
 			'</div></div></div>'
 		);
-		if (name === "Chinampa") {
+		if (name === "Chinampa" || deviceType === "Chinampa") {
 			// Fires the inline 24h Water Level chart (see buildChinampaContent/loadChinampaLevelChart)
 			// as soon as the modal opens; kept fresh afterwards by the periodic staleness check below
 			// (this handler alone would only ever fetch once, since it's bound only on first creation).
@@ -306,7 +306,7 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 		}).addClass('active').siblings('li').removeClass('active');
 	});
 
-	if (name === "Chinampa") {
+	if (name === "Chinampa" || deviceType === "Chinampa") {
 		// Runs on every refresh (every incoming pulse), not just modal creation/open — but only
 		// actually re-fetches while the modal is visibly open and the cached chart (re-injected by
 		// buildChinampaContent every rebuild — see its comment) is missing or stale. Keeps the
@@ -402,18 +402,8 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 function buildTelepathonDetailView(telepathon, idSuffix, deviceType) {
 	var name = telepathon["Name"];
 	var safeId = name.replace(/[^a-zA-Z0-9]/g, '_') + (idSuffix || '');
-	if (deviceType === undefined) {
-		deviceType = DeviceViewsHost.deviceType(name) || '';
-		var denes = telepathon["Denes"] || [];
-		for (var di = 0; di < denes.length && !deviceType; di++) {
-			if (denes[di]["Name"] !== "Configuration") continue;
-			var cws = denes[di]["DeneWords"] || [];
-			for (var ci = 0; ci < cws.length; ci++) {
-				if (cws[ci]["Name"] === "Device Type Id") { deviceType = cws[ci]["Value"]; break; }
-			}
-		}
-	}
-	return name === "Chinampa" ? buildChinampaContent(telepathon, safeId) :
+	if (deviceType === undefined) deviceType = deviceViewsTypeOf(telepathon);
+	return (name === "Chinampa" || deviceType === "Chinampa") ? buildChinampaContent(telepathon, safeId) :
 		deviceType === "Daffodil" ? buildDaffodilContent(telepathon) :
 		deviceType === "Langley" ? buildLangleyContent(telepathon) :
 		buildTelepathonDetailContent(telepathon);
@@ -458,5 +448,21 @@ function fetchChinampaLevelChartFor(telepathon, safeId) {
 // the popup would start when it opens (today only Chinampa's water level chart).
 function startTelepathonDetailView(telepathon, idSuffix) {
 	var name = telepathon["Name"];
-	if (name === "Chinampa") fetchChinampaLevelChartFor(telepathon, name.replace(/[^a-zA-Z0-9]/g, '_') + (idSuffix || ''));
+	if (name === "Chinampa" || deviceViewsTypeOf(telepathon) === "Chinampa") {
+		fetchChinampaLevelChartFor(telepathon, name.replace(/[^a-zA-Z0-9]/g, '_') + (idSuffix || ''));
+	}
+}
+
+// A telepathon's device type: what the host says, else its Configuration dene's "Device Type Id" (2026-11-01).
+function deviceViewsTypeOf(telepathon) {
+	var deviceType = DeviceViewsHost.deviceType(telepathon["Name"]) || '';
+	var denes = telepathon["Denes"] || [];
+	for (var di = 0; di < denes.length && !deviceType; di++) {
+		if (denes[di]["Name"] !== "Configuration") continue;
+		var cws = denes[di]["DeneWords"] || [];
+		for (var ci = 0; ci < cws.length; ci++) {
+			if (cws[ci]["Name"] === "Device Type Id") { deviceType = String(cws[ci]["Value"]); break; }
+		}
+	}
+	return deviceType;
 }
