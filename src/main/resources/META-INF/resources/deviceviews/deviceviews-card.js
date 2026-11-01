@@ -269,27 +269,7 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 	var detailHtml = buildTelepathonDetailView(telepathon, idSuffix, deviceType);
 
 	function fetchChinampaLevelChart() {
-		function numOrNaN(dw) { return dw ? parseFloat(dw["Value"]) : NaN; }
-		var ftMeasuredDW = findPW("Fish Tank Measured Height");
-		var stMeasuredDW = findPW("Sump Trough Measured Height");
-		loadChinampaLevelChart(name, 'chinampa-level-chart-' + safeId, [
-			{
-				dwName: "Fish Tank Measured Height",
-				units: ftMeasuredDW ? (ftMeasuredDW["Units"] || '') : '',
-				dash: '', // solid = Fish
-				heightValue: numOrNaN(findSW("Fish Tank Height")),
-				minValue: numOrNaN(findSW("Minimum Fish Tank Level")),
-				maxValue: numOrNaN(findSW("Maximum Fish Tank Level"))
-			},
-			{
-				dwName: "Sump Trough Measured Height",
-				units: stMeasuredDW ? (stMeasuredDW["Units"] || '') : '',
-				dash: '6,4', // dashed = Sump
-				heightValue: numOrNaN(findSW("Sump Trough Height")),
-				minValue: numOrNaN(findSW("Minimum Sump Trough Level")),
-				maxValue: numOrNaN(findSW("Maximum Sump Trough Level"))
-			}
-		]);
+		fetchChinampaLevelChartFor(telepathon, safeId);
 	}
 
 	if (!$('#' + modalId).length) {
@@ -437,4 +417,46 @@ function buildTelepathonDetailView(telepathon, idSuffix, deviceType) {
 		deviceType === "Daffodil" ? buildDaffodilContent(telepathon) :
 		deviceType === "Langley" ? buildLangleyContent(telepathon) :
 		buildTelepathonDetailContent(telepathon);
+}
+
+// Chinampa's inline 24h water level chart (Fish Tank and Sump Trough), into its container in the detail view
+// (moved out of buildTelepathonCardView on 2026-11-01 so a page showing the detail without a popup can ask too).
+function fetchChinampaLevelChartFor(telepathon, safeId) {
+	var purposeWords = [], sensorWords = [];
+	(telepathon["Denes"] || []).forEach(function(d) {
+		if (d["Name"] === "Purpose") purposeWords = d["DeneWords"] || [];
+		if (d["Name"] === "Sensors") sensorWords = d["DeneWords"] || [];
+	});
+	function find(words, n) {
+		for (var i = 0; i < words.length; i++) if (words[i]["Name"] === n) return words[i];
+		return null;
+	}
+	function numOrNaN(dw) { return dw ? parseFloat(dw["Value"]) : NaN; }
+	var ftMeasuredDW = find(purposeWords, "Fish Tank Measured Height");
+	var stMeasuredDW = find(purposeWords, "Sump Trough Measured Height");
+	loadChinampaLevelChart(telepathon["Name"], 'chinampa-level-chart-' + safeId, [
+		{
+			dwName: "Fish Tank Measured Height",
+			units: ftMeasuredDW ? (ftMeasuredDW["Units"] || '') : '',
+			dash: '', // solid = Fish
+			heightValue: numOrNaN(find(sensorWords, "Fish Tank Height")),
+			minValue: numOrNaN(find(sensorWords, "Minimum Fish Tank Level")),
+			maxValue: numOrNaN(find(sensorWords, "Maximum Fish Tank Level"))
+		},
+		{
+			dwName: "Sump Trough Measured Height",
+			units: stMeasuredDW ? (stMeasuredDW["Units"] || '') : '',
+			dash: '6,4', // dashed = Sump
+			heightValue: numOrNaN(find(sensorWords, "Sump Trough Height")),
+			minValue: numOrNaN(find(sensorWords, "Minimum Sump Trough Level")),
+			maxValue: numOrNaN(find(sensorWords, "Maximum Sump Trough Level"))
+		}
+	]);
+}
+
+// For a page that shows the detail view itself (no popup): call once its HTML is in the page, to start what
+// the popup would start when it opens (today only Chinampa's water level chart).
+function startTelepathonDetailView(telepathon, idSuffix) {
+	var name = telepathon["Name"];
+	if (name === "Chinampa") fetchChinampaLevelChartFor(telepathon, name.replace(/[^a-zA-Z0-9]/g, '_') + (idSuffix || ''));
 }
