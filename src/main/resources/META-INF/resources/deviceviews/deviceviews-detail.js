@@ -742,44 +742,100 @@ function buildLangleyContent(telepathon) {
 	html += '<ul class="nav nav-pills" style="margin-bottom:10px;">';
 	html += '<li class="active" onclick="return teleonomeShowTab(\'lang-status-' + safeId + '\', this)"><a href="#">Status</a></li>';
 	html += '<li onclick="return teleonomeShowTab(\'lang-config-' + safeId + '\', this)"><a href="#">Config</a></li>';
-	html += '<li onclick="return teleonomeShowTab(\'lang-diag-' + safeId + '\', this)"><a href="#">Diagnostics</a></li>';
 	html += '</ul><div class="tab-content">';
 
+	// Status: the summary tiles, then sub-tabs that keep what the device senses (the energizer and the fence)
+	// apart from how it powers itself, as on Daffodil (2026-11-01, Ari).
 	html += '<div class="tab-pane active" id="lang-status-' + safeId + '">';
 	html += '<div class="row" style="margin-bottom:8px;">';
 	html += vitalCard('Fence Voltage', fenceKV !== null ? fenceKV.toFixed(1) : '—', 'kV', fenceColor);
+	if (energizerDW) html += vitalCard('Energizer Batt', energizerDW["Value"], 'V', '#3498db');
 	if (battDW) html += vitalCard('Battery', battDW["Value"], 'V', '#3498db');
 	if (solarDW) html += vitalCard('Solar', solarDW["Value"], 'V', '#3498db');
-	if (energizerDW) html += vitalCard('Energizer Batt', energizerDW["Value"], 'V', '#3498db');
 	if (tempDW) html += vitalCard('Temp', tempDW["Value"], '°C', '#3498db');
 	if (rssiDW) { var rssiV = parseFloat(rssiDW["Value"]); html += vitalCard('Signal', rssiDW["Value"], '', rssiV > -95 ? '#27ae60' : '#f39c12'); }
 	html += '</div>';
 
+	var subPillStyle = 'font-size:12px;padding:3px 9px;';
+	html += '<ul class="nav nav-pills" style="margin-bottom:8px;flex-wrap:wrap;">';
+	html += '<li class="active" onclick="return teleonomeShowTab(\'lang-energizer-' + safeId + '\', this)"><a href="#" style="' + subPillStyle + '">Energizer</a></li>';
+	html += '<li onclick="return teleonomeShowTab(\'lang-power-' + safeId + '\', this)"><a href="#" style="' + subPillStyle + '">Power</a></li>';
+	html += '<li onclick="return teleonomeShowTab(\'lang-comms-' + safeId + '\', this)"><a href="#" style="' + subPillStyle + '">Comms</a></li>';
+	html += '<li onclick="return teleonomeShowTab(\'lang-diag-' + safeId + '\', this)"><a href="#" style="' + subPillStyle + '">Diagnostics</a></li>';
+	html += '</ul>';
+	html += '<div class="tab-content">';
+
+	function table(rows) {
+		return '<table class="table table-condensed table-striped" style="margin-bottom:0;font-size:12px;">' + rows + '</table>';
+	}
+	function plainRow(label, dw) {
+		if (!dw) return '';
+		return '<tr><td style="width:40%;">' + label + '</td><td><strong>' + dw["Value"] + (dw["Units"] ? ' ' + dw["Units"] : '') + '</strong></td><td></td></tr>';
+	}
+
+	// Energizer: the sensor - the fence it watches and the energizer's own battery
+	html += '<div class="tab-pane active" id="lang-energizer-' + safeId + '">';
+	html += multiChartPanelGroup([
+		{ title: "Fence Chart",     dwNames: ["Fence Voltage Avg", "Fence Voltage Min", "Fence Voltage Max"], dwUnits: ["kV", "kV", "kV"] },
+		{ title: "Energizer Chart", dwNames: ["Energizer Battery Voltage", "Energizer Battery Current"], dwUnits: ["V", "mA"] }
+	]);
+	html += table(
+		row('Fence Voltage Avg', fenceAvgDW, tpName, 'Purpose') +
+		row('Fence Voltage Min', findDW(pw, 'Fence Voltage Min'), tpName, 'Purpose') +
+		row('Fence Voltage Max', findDW(pw, 'Fence Voltage Max'), tpName, 'Purpose') +
+		row('Fence Voltage', findDW(pw, 'Fence Voltage'), tpName, 'Purpose') +
+		row('Pulse Count', findDW(pw, 'Pulse Count'), tpName, 'Purpose') +
+		row('Seconds Since Last Pulse', findDW(pw, 'Seconds Since Last Pulse'), tpName, 'Purpose') +
+		row('Energizer Battery Voltage', energizerDW, tpName, 'Purpose') +
+		row('Energizer Battery Current', findDW(pw, 'Energizer Battery Current'), tpName, 'Purpose'));
+	html += '</div>';
+
+	// Power: how the Langley itself is powered (solar panel, its battery)
+	html += '<div class="tab-pane" id="lang-power-' + safeId + '">';
 	html += multiChartPanelGroup([
 		{ title: "Power Chart",         dwNames: ["Solar Voltage", "Battery Voltage", "Battery Current", "Solar Current"], dwUnits: ["V", "V", "mA", "mA"] },
 		{ title: "Solar Power Chart",   dwNames: ["Solar Voltage", "Solar Current"], dwUnits: ["V", "mA"] },
 		{ title: "Battery Power Chart", dwNames: ["Battery Voltage", "Battery Current"], dwUnits: ["V", "mA"] }
 	]);
-	html += multiChartPanel("Energizer Chart", ["Energizer Battery Voltage", "Energizer Battery Current"], ["V", "mA"]);
+	var powerRows = row('Solar Voltage', solarDW, tpName, 'Purpose') +
+		row('Solar Current', findDW(pw, 'Solar Current'), tpName, 'Purpose') +
+		row('Battery Voltage', battDW, tpName, 'Purpose') +
+		row('Battery Current', findDW(pw, 'Battery Current'), tpName, 'Purpose');
+	var socVal = DeviceViewsHost.setting(tpName, DENEWORD_PULSE_TASK_BATTERY_SOC_LIVE);
+	if (socVal !== null && socVal !== undefined) {
+		powerRows += '<tr><td style="width:40%;">Battery SOC</td><td><strong>' + parseFloat(socVal).toFixed(1) + '%</strong></td>'
+			+ '<td style="text-align:right;white-space:nowrap;padding:2px 4px;">' + mkGraphBtns(tpName, "Purpose", DENEWORD_PULSE_TASK_BATTERY_SOC_LIVE) + '</td></tr>';
+	}
+	powerRows += row('External Battery Voltage', findDW(pw, 'External Battery Voltage'), tpName, 'Purpose') +
+		row('Overnight Use', findDW(pw, 'Overnight Mah'), tpName, 'Purpose') +
+		row('Estimated Runtime', findDW(pw, 'Estimated Runtime'), tpName, 'Purpose');
+	if (opStatusDW) powerRows += '<tr><td style="width:40%;">Operating Status</td><td><strong>' + opLabel + '</strong></td><td></td></tr>';
+	html += table(powerRows);
+	html += '</div>';
 
-	html += '<table class="table table-condensed table-striped" style="font-size:12px;">';
-	html += row('Fence Voltage Avg', fenceAvgDW, tpName, 'Purpose');
-	html += row('Fence Voltage Min', findDW(pw, 'Fence Voltage Min'), tpName, 'Purpose');
-	html += row('Fence Voltage Max', findDW(pw, 'Fence Voltage Max'), tpName, 'Purpose');
-	html += row('Pulse Count', findDW(pw, 'Pulse Count'), tpName, 'Purpose');
-	html += row('Battery Voltage', battDW, tpName, 'Purpose');
-	html += row('Battery Current', findDW(pw, 'Battery Current'), tpName, 'Purpose');
-	html += row('Solar Voltage', solarDW, tpName, 'Purpose');
-	html += row('Solar Current', findDW(pw, 'Solar Current'), tpName, 'Purpose');
-	html += row('Energizer Battery Voltage', energizerDW, tpName, 'Purpose');
-	html += row('Energizer Battery Current', findDW(pw, 'Energizer Battery Current'), tpName, 'Purpose');
-	html += row('External Battery Voltage', findDW(pw, 'External Battery Voltage'), tpName, 'Purpose');
-	html += row('Internal Temperature', tempDW, tpName, 'Purpose');
-	html += row('Seconds Since Last Pulse', findDW(pw, 'Seconds Since Last Pulse'), tpName, 'Purpose');
-	html += row('snr', findDW(pw, 'snr'), tpName, 'Purpose');
-	html += row('rssi', rssiDW, tpName, 'Purpose');
-	html += row('RTC Battery Voltage', findDW(pw, 'RTC Battery Voltage'), tpName, 'Purpose');
-	html += '</table>';
+	// Comms: the LoRa link to the Teleonome
+	html += '<div class="tab-pane" id="lang-comms-' + safeId + '">';
+	html += table(
+		row('rssi', rssiDW, tpName, 'Purpose') +
+		row('snr', findDW(pw, 'snr'), tpName, 'Purpose') +
+		plainRow('Parent Short Name', findDW(pw, 'Parent Short Name')) +
+		plainRow('Branch Label', findDW(pw, 'Branch Label')));
+	html += '</div>';
+
+	// Diagnostics: vital signs, the board, the firmware
+	var hardwareHtml = table(
+		row('Internal Temperature', tempDW, tpName, 'Purpose') +
+		row('RTC Battery Voltage', findDW(pw, 'RTC Battery Voltage'), tpName, 'Purpose') +
+		plainRow('Local Time', localTimeDW) +
+		plainRow('Checksum', findDW(pw, 'Checksum')));
+	html += '<div class="tab-pane" id="lang-diag-' + safeId + '">';
+	html += buildDiagnosticsSubTabs('lang-diag-' + safeId,
+		buildVitalSignsPanel(telepathon, tpName, ["INA219 Solar", "INA219 Battery", "INA219 Energizer", "ADS1115 Fence", "DS18B20 Board"], "Langley"),
+		hardwareHtml,
+		buildDeviceIdentityPanel(telepathon, "Langley"));
+	html += '</div>';
+
+	html += '</div>'; // sub tab-content
 	html += '</div>'; // status pane
 
 	html += '<div class="tab-pane" id="lang-config-' + safeId + '">';
@@ -788,10 +844,6 @@ function buildLangleyContent(telepathon) {
 		html += '<tr><td style="width:50%;">' + cw[ci]["Name"] + '</td><td><strong>' + cw[ci]["Value"] + (cw[ci]["Units"] ? ' ' + cw[ci]["Units"] : '') + '</strong></td></tr>';
 	}
 	html += '</table></div>';
-
-	html += '<div class="tab-pane" id="lang-diag-' + safeId + '">';
-	html += buildVitalSignsPanel(telepathon, tpName, ["INA219 Solar", "INA219 Battery", "INA219 Energizer", "ADS1115 Fence", "DS18B20 Board"], "Langley");
-	html += '</div>';
 
 	html += '</div>'; // tab-content
 	html += '</div>';
