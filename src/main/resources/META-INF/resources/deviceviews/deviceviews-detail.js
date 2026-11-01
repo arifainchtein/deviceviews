@@ -1094,3 +1094,115 @@ function buildChinampaContent(telepathon, safeId) {
 	html += '</div>'; // end chinampa card
 	return html;
 }
+
+// Annabelle herself (2026-11-01): the status her firmware (10+) adds to the AsyncData reply, read by the
+// framework's AnnabelleStatusDeserializer - like the Diagnostics tab of her own page (annabelle.local).
+function buildAnnabelleContent(telepathon) {
+	var tpName = telepathon["Name"];
+	var safeId = tpName.replace(/[^a-zA-Z0-9]/g, '_');
+	var pw = [], cw = [];
+	(telepathon["Denes"] || []).forEach(function(d) {
+		if (d["Name"] === "Purpose") pw = d["DeneWords"] || [];
+		if (d["Name"] === "Configuration") cw = d["DeneWords"] || [];
+	});
+	function find(words, n) {
+		for (var i = 0; i < words.length; i++) if (words[i]["Name"] === n) return words[i];
+		return null;
+	}
+	function val(n) { var w = find(pw, n); return w ? w["Value"] : null; }
+	function num(n) { var v = parseFloat(val(n)); return isNaN(v) ? null : v; }
+	function kb(n) { var v = num(n); return v === null ? '—' : Math.round(v / 1024) + ' KB'; }
+	function duration(sec) { return sec === null ? '—' : deviceViewsFormatAge(sec).replace(' ago', ''); }
+	function graphBtns(dwName) {
+		var d = 'data-telepathonname="' + tpName + '" data-denename="Purpose" data-denewordname="' + dwName + '"';
+		var c = 'btn btn-xs btn-default telepathon-history-value';
+		return '<button class="' + c + '" ' + d + ' data-range="3600000">1h</button> ' +
+			'<button class="' + c + '" ' + d + ' data-range="86400000">24h</button> ' +
+			'<button class="' + c + ' hidden-xs" ' + d + ' data-range="604800000">7d</button>';
+	}
+	// a row: label, value as shown, and (optional) the dene word to chart
+	function row(label, shown, chartWord) {
+		return '<tr><td style="width:40%;">' + label + '</td><td><strong>' + shown + '</strong></td>' +
+			'<td style="text-align:right;white-space:nowrap;padding:2px 4px;">' + (chartWord ? graphBtns(chartWord) : '') + '</td></tr>';
+	}
+	function table(rows) {
+		return '<table class="table table-condensed table-striped" style="margin-bottom:0;font-size:12px;">' + rows + '</table>';
+	}
+	function tile(label, value, color) {
+		return '<div class="col-xs-4 col-sm-2" style="margin-bottom:8px;padding:2px;"><div style="border-radius:10px;overflow:hidden;">' +
+			'<div style="padding:8px 4px;color:white;text-align:center;background:' + color + ';">' +
+			'<div style="font-size:9px;text-transform:uppercase;font-weight:bold;opacity:0.9;">' + label + '</div>' +
+			'<div style="font-size:16px;font-weight:800;">' + value + '</div></div></div></div>';
+	}
+	function warn(text, bad) { return bad ? '<span style="color:#c62828;">' + text + '</span>' : text; }
+
+	var nowSec = Date.now() / 1000;
+	var weatherTime = num("Weather Forecast Time");
+	var weatherSent = String(val("Weather Forecast Sent")) === "true";
+	var weatherAge = weatherTime && weatherTime > 0 ? Math.max(0, nowSec - weatherTime) : null;
+	var received = num("Packets Received") || 0, corrupted = num("Packets Corrupted") || 0;
+	var corruptPct = received + corrupted ? Math.round(100 * corrupted / (received + corrupted)) : 0;
+	var uptime = num("Uptime");
+	var blockKb = num("Largest Free Block") === null ? null : num("Largest Free Block") / 1024;
+	function perHour(n) { return uptime ? Math.round(n * 3600 / uptime) + ' / hour' : '—'; }
+
+	var html = '<div style="padding:2px 0 10px 0;margin-top:-8px;border-bottom:1px solid #eee;margin-bottom:10px;font-size:13px;color:#888;">' +
+		(val("Local Time") || '') + '&nbsp;&nbsp;Firmware ' + ((find(cw, "Firmware Version") || {})["Value"] || '—') + '</div>';
+
+	html += '<ul class="nav nav-pills" style="margin-bottom:10px;">';
+	html += '<li class="active" onclick="return teleonomeShowTab(\'anna-status-' + safeId + '\', this)"><a href="#">Status</a></li>';
+	html += '<li onclick="return teleonomeShowTab(\'anna-config-' + safeId + '\', this)"><a href="#">Config</a></li>';
+	html += '</ul><div class="tab-content">';
+
+	html += '<div class="tab-pane active" id="anna-status-' + safeId + '">';
+	html += '<div class="row" style="margin-bottom:8px;">';
+	html += tile('Up', duration(uptime), '#3498db');
+	html += tile('Weather', weatherAge === null ? 'none' : duration(weatherAge), !weatherSent ? '#e74c3c' : (weatherAge > 6 * 3600 ? '#f39c12' : '#27ae60'));
+	html += tile('Corrupted', corruptPct + '%', corruptPct >= 10 ? '#f39c12' : '#27ae60');
+	html += tile('Free block', blockKb === null ? '—' : Math.round(blockKb) + ' KB', blockKb !== null && blockKb < 12 ? '#e74c3c' : '#27ae60');
+	html += tile('WiFi drops', (num("WiFi Reconnects") || 0) + '', (num("WiFi Reconnects") || 0) > 0 ? '#f39c12' : '#27ae60');
+	html += '</div>';
+
+	var sub = 'font-size:12px;padding:3px 9px;';
+	html += '<ul class="nav nav-pills" style="margin-bottom:8px;flex-wrap:wrap;">';
+	html += '<li class="active" onclick="return teleonomeShowTab(\'anna-weather-' + safeId + '\', this)"><a href="#" style="' + sub + '">Weather</a></li>';
+	html += '<li onclick="return teleonomeShowTab(\'anna-radio-' + safeId + '\', this)"><a href="#" style="' + sub + '">Radio</a></li>';
+	html += '<li onclick="return teleonomeShowTab(\'anna-health-' + safeId + '\', this)"><a href="#" style="' + sub + '">Health</a></li>';
+	html += '</ul><div class="tab-content">';
+
+	html += '<div class="tab-pane active" id="anna-weather-' + safeId + '">' + table(
+		row('Last forecast', weatherTime && weatherTime > 0 ? new Date(weatherTime * 1000).toLocaleString() + ' <span style="color:#999;font-weight:normal;">(' + deviceViewsFormatAge(weatherAge) + ')</span>' : 'none since Annabelle started') +
+		row('Result', warn(val("Weather Forecast Result") || '—', !weatherSent)) +
+		row('Started by', val("Weather Trigger") || '—') +
+		row('Retries', num("Weather Retries") === null ? '—' : num("Weather Retries")) +
+		row('Waiting to send', String(val("Weather Pending")) === "true" ? 'yes' : 'no')) + '</div>';
+
+	html += '<div class="tab-pane" id="anna-radio-' + safeId + '">' + table(
+		row('Packets received', received + ' <span style="color:#999;font-weight:normal;">(' + perHour(received) + ')</span>', "Packets Received") +
+		row('Corrupted packets', warn(corrupted + ' (' + corruptPct + '%)', corruptPct >= 10), "Packets Corrupted") +
+		row('Dropped, queue full', warn(String(num("Packets Dropped") || 0), (num("Packets Dropped") || 0) > 0), "Packets Dropped") +
+		row('Not listening', (num("Not Listening") === null ? '—' : num("Not Listening") + '%'), "Not Listening") +
+		row('Sends', (num("Sends") || 0) + ' <span style="color:#999;font-weight:normal;">(weather forecasts and device commands)</span>', "Sends")) +
+		'<p class="text-muted" style="font-size:11px;margin-top:6px;">Counted since Annabelle started, ' + duration(uptime) + ' ago.</p></div>';
+
+	html += '<div class="tab-pane" id="anna-health-' + safeId + '">' + table(
+		row('Up for', duration(uptime), "Uptime") +
+		row('Last restart', val("Last Reset Reason") || '—') +
+		row('Low-memory restarts', warn(String(num("Low Memory Restarts") || 0), (num("Low Memory Restarts") || 0) > 0)) +
+		row('WiFi', ((num("WiFi Reconnects") || 0) ? warn(num("WiFi Reconnects") + ' reconnects', true) : 'no drops') +
+			((num("WiFi Longest Gap") || 0) ? ', longest gap ' + duration(num("WiFi Longest Gap")) : ''), "WiFi Reconnects") +
+		row('Free memory', kb("Free Memory") + ' <span style="color:#999;font-weight:normal;">(lowest ' + kb("Lowest Free Memory") + ')</span>', "Free Memory") +
+		row('Largest free block', warn(kb("Largest Free Block"), blockKb !== null && blockKb < 12), "Largest Free Block") +
+		row('Longest main loop', (num("Longest Main Loop") === null ? '—' : num("Longest Main Loop") + ' ms'), "Longest Main Loop") +
+		row('Failed memory requests', warn(String(num("Failed Memory Requests") || 0), (num("Failed Memory Requests") || 0) > 0))) + '</div>';
+
+	html += '</div></div>'; // sub tab-content, status pane
+
+	html += '<div class="tab-pane" id="anna-config-' + safeId + '"><table class="table table-condensed table-striped" style="font-size:13px;">';
+	cw.forEach(function(w) {
+		html += '<tr><td style="width:50%;">' + w["Name"] + '</td><td><strong>' + w["Value"] + (w["Units"] ? ' ' + w["Units"] : '') + '</strong></td></tr>';
+	});
+	html += '</table></div>';
+	html += '</div>'; // tab-content
+	return html;
+}

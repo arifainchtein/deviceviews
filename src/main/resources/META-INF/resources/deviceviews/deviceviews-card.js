@@ -45,6 +45,9 @@ function computeTelepathonAgeStatus(telepathon) {
 	var statusColor;
 	if (name === "Chinampa" || deviceType === "Chinampa") {
 		statusColor = rangeColor(120, 240);
+	} else if (deviceType === "Annabelle") {
+		// her status comes when something is new, and at least every 10 minutes (firmware 10)
+		statusColor = rangeColor(720, 1500);
 	} else if (deviceType === "Daffodil" || deviceType === "Langley") {
 		if (opNum === "4") {
 			var cloudySleepDW = findPW("Sleep Time");
@@ -139,6 +142,9 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 	var statusColor;
 	if (name === "Chinampa" || deviceType === "Chinampa") {
 		statusColor = rangeColor(120, 240);
+	} else if (deviceType === "Annabelle") {
+		// her status comes when something is new, and at least every 10 minutes (firmware 10)
+		statusColor = rangeColor(720, 1500);
 	} else if (deviceType === "Daffodil" || deviceType === "Langley") {
 		if (opNum === "4") {
 			var cloudySleepDW = findPW("Sleep Time");
@@ -207,6 +213,11 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 			if (solarVoltDW) extras.push('P: ' + solarVoltDW["Value"] + 'V' + (solarCurrDW ? ' ' + solarCurrDW["Value"] + 'mA' : ''));
 			var energizerVoltCardDW = findPW("Energizer Battery Voltage");
 			if (energizerVoltCardDW) extras.push('E: ' + energizerVoltCardDW["Value"] + 'V');
+		} else if (deviceType === "Annabelle") {
+			var uptimeDW = findPW("Uptime");
+			if (uptimeDW) extras.push('Up ' + deviceViewsFormatAge(parseFloat(uptimeDW["Value"])).replace(' ago', ''));
+			var freeDW = findPW("Free Memory");
+			if (freeDW) extras.push(Math.round(parseFloat(freeDW["Value"]) / 1024) + ' KB free');
 		} else if (battDW) {
 			extras.push(battDW["Value"] + 'V');
 		}
@@ -260,6 +271,8 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 			}
 		} else if (deviceType === "Langley") {
 			addPart('Fence', findPW("Fence Voltage Avg"));
+		} else if (deviceType === "Annabelle") {
+			parts.push(annabelleWeatherSummary(purposeWords));
 		}
 		if (parts.length) {
 			sensorLineHtml = '<div style="font-size:13px;color:#444;margin-top:4px;text-align:center;">' + parts.join('&nbsp;&nbsp;') + '</div>';
@@ -406,6 +419,7 @@ function buildTelepathonDetailView(telepathon, idSuffix, deviceType) {
 	return (name === "Chinampa" || deviceType === "Chinampa") ? buildChinampaContent(telepathon, safeId) :
 		deviceType === "Daffodil" ? buildDaffodilContent(telepathon) :
 		deviceType === "Langley" ? buildLangleyContent(telepathon) :
+		deviceType === "Annabelle" ? buildAnnabelleContent(telepathon) :
 		buildTelepathonDetailContent(telepathon);
 }
 
@@ -465,4 +479,20 @@ function deviceViewsTypeOf(telepathon) {
 		}
 	}
 	return deviceType;
+}
+
+// Annabelle's weather forecast in a few words, coloured: when it last went out, or that it did not (2026-11-01).
+function annabelleWeatherSummary(purposeWords) {
+	function pw(n) {
+		for (var i = 0; i < purposeWords.length; i++) if (purposeWords[i]["Name"] === n) return purposeWords[i]["Value"];
+		return null;
+	}
+	var t = parseInt(pw("Weather Forecast Time"));
+	var result = String(pw("Weather Forecast Result") || "");
+	if (!t || t <= 0) return '<span style="color:#e67e22;">Weather: none sent yet</span>';
+	var age = Math.max(0, Date.now() / 1000 - t);
+	var sent = String(pw("Weather Forecast Sent")) === "true";
+	var color = !sent ? '#e74c3c' : (age > 6 * 3600 ? '#e67e22' : '#27ae60');
+	return '<span style="color:' + color + ';">Weather ' + (sent ? 'sent ' : 'NOT sent ') + deviceViewsFormatAge(age) + '</span>'
+		+ (sent ? '' : '<br><span style="font-size:11px;color:#e74c3c;">' + result.replace(/^not sent: /, '') + '</span>');
 }
