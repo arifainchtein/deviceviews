@@ -1136,10 +1136,14 @@ function buildAnnabelleContent(telepathon) {
 	}
 	function warn(text, bad) { return bad ? '<span style="color:#c62828;">' + text + '</span>' : text; }
 
+	// Annabelle's clock is not UTC, so not her timestamps: the forecast's age at the reading (on her own clock),
+	// plus the time since the reading ("Seconds Time", the Pi's)
 	var nowSec = Date.now() / 1000;
-	var weatherTime = num("Weather Forecast Time");
+	var readingTime = num("Seconds Time") || nowSec;
+	var ageAtReading = num("Weather Forecast Age");
 	var weatherSent = String(val("Weather Forecast Sent")) === "true";
-	var weatherAge = weatherTime && weatherTime > 0 ? Math.max(0, nowSec - weatherTime) : null;
+	var weatherAge = ageAtReading !== null && ageAtReading >= 0 ? ageAtReading + Math.max(0, nowSec - readingTime) : null;
+	var weatherTime = weatherAge !== null ? nowSec - weatherAge : null;
 	var received = num("Packets Received") || 0, corrupted = num("Packets Corrupted") || 0;
 	var corruptPct = received + corrupted ? Math.round(100 * corrupted / (received + corrupted)) : 0;
 	var uptime = num("Uptime");

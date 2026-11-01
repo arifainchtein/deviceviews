@@ -487,10 +487,12 @@ function annabelleWeatherSummary(purposeWords) {
 		for (var i = 0; i < purposeWords.length; i++) if (purposeWords[i]["Name"] === n) return purposeWords[i]["Value"];
 		return null;
 	}
-	var t = parseInt(pw("Weather Forecast Time"));
+	// Annabelle's clock is not UTC: the age at the reading (on her own clock), plus the time since the reading
+	var ageAtReading = parseInt(pw("Weather Forecast Age"));
+	var readingTime = parseInt(pw("Seconds Time"));
 	var result = String(pw("Weather Forecast Result") || "");
-	if (!t || t <= 0) return '<span style="color:#e67e22;">Weather: none sent yet</span>';
-	var age = Math.max(0, Date.now() / 1000 - t);
+	if (isNaN(ageAtReading) || ageAtReading < 0) return '<span style="color:#e67e22;">Weather: none sent yet</span>';
+	var age = ageAtReading + Math.max(0, Date.now() / 1000 - (readingTime || Date.now() / 1000));
 	var sent = String(pw("Weather Forecast Sent")) === "true";
 	var color = !sent ? '#e74c3c' : (age > 6 * 3600 ? '#e67e22' : '#27ae60');
 	return '<span style="color:' + color + ';">Weather ' + (sent ? 'sent ' : 'NOT sent ') + deviceViewsFormatAge(age) + '</span>'
