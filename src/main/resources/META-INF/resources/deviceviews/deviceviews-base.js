@@ -17,8 +17,66 @@ var DeviceViewsHost = {
 	logoUrl: function(deviceType) { return '/deviceviews/logos/' + deviceType + '.svg'; },
 	// One dene word's history: req = {telepathon, nucleus, dene, deneWord, range (ms)}; callback(data) with
 	// data = [{timeString: "YYYY-MM-DD HH:MM:SS" (local time), Value}], oldest first.
-	fetchHistory: function(req, callback) { callback([]); }
+	fetchHistory: function(req, callback) { callback([]); },
+	// Whether the device has a place on a map: true / false when the host knows (devices.digitalstables.com:
+	// a location set on the device page counts), null to go by the telepathon's own Latitude / Longitude.
+	isLocated: function(telepathon) { return null; },
+	// One sentence after "no GPS position" saying how to place the device by hand on this host ('' = none).
+	noLocationHint: function(telepathon) { return ''; }
 };
+
+// ---- GPS (2026-11-02): a device whose data arrives without a position is not on the map; say so ----
+// The position in a telepathon: "Latitude" / "Longitude" in any dene (Langley writes "longitude" in
+// lowercase), numbers in range and not 0,0 - the same rule devices.digitalstables.com's map uses
+// (DevicePageServlet.putLocation). null when there is none.
+function deviceViewsLocationOf(telepathon) {
+	var lat = null, lon = null;
+	((telepathon && telepathon["Denes"]) || []).forEach(function(d) {
+		(d["DeneWords"] || []).forEach(function(w) {
+			var n = String(w["Name"] || '').toLowerCase(), v = parseFloat(w["Value"]);
+			if (isNaN(v)) return;
+			if (n === 'latitude') lat = v;
+			if (n === 'longitude') lon = v;
+		});
+	});
+	if (lat === null || lon === null || (lat === 0 && lon === 0) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+	return {latitude: lat, longitude: lon};
+}
+
+function deviceViewsMissingLocation(telepathon) {
+	var known = DeviceViewsHost.isLocated(telepathon);
+	if (known === true || known === false) return !known;
+	return deviceViewsLocationOf(telepathon) === null;
+}
+
+// A map pin struck through, in the current colour.
+function deviceViewsNoGpsIcon(size) {
+	return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" style="vertical-align:middle;" aria-hidden="true">' +
+		'<path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z" fill="currentColor"/>' +
+		'<line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>';
+}
+
+function deviceViewsNoGpsText(telepathon) {
+	var hint = DeviceViewsHost.noLocationHint(telepathon);
+	return 'Data is arriving, but this device sends no GPS position, so it is not on the map.' + (hint ? ' ' + hint : '');
+}
+
+// On the card: a small badge over the logo, the full sentence as its tooltip ('' when it has a place).
+function deviceViewsNoGpsBadge(telepathon) {
+	if (!deviceViewsMissingLocation(telepathon)) return '';
+	return '<span class="dv-nogps-badge" title="' + deviceViewsNoGpsText(telepathon).replace(/"/g, '&quot;') + '" ' +
+		'style="position:absolute;top:6px;left:6px;background:#ef6c00;color:#fff;border-radius:10px;padding:1px 6px 1px 4px;' +
+		'font-size:10px;font-weight:bold;line-height:16px;white-space:nowrap;">' + deviceViewsNoGpsIcon(13) + ' No GPS</span>';
+}
+
+// At the top of the detail (the popup, and the device page itself).
+function deviceViewsNoGpsBanner(telepathon) {
+	if (!deviceViewsMissingLocation(telepathon)) return '';
+	return '<div class="dv-nogps-banner" style="display:flex;align-items:center;gap:8px;background:#fff3e0;border:1px solid #ffb74d;' +
+		'color:#8a4b00;border-radius:6px;padding:6px 10px;margin-bottom:10px;font-size:13px;">' +
+		'<span style="color:#ef6c00;flex:0 0 auto;">' + deviceViewsNoGpsIcon(20) + '</span>' +
+		'<span>' + deviceViewsNoGpsText(telepathon) + '</span></div>';
+}
 
 // ---- Constants (moved from TeleonomeConstants.js) ----
 // PulseTask output DeneWords (Purpose → Cerebellum → Daffodil)

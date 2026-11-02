@@ -167,9 +167,9 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 		var ac = alertCodeDW ? parseInt(alertCodeDW["Value"]) : 99;
 		var alertMsgs = {0:"Initializing...",1:"Fish Tank Data Stale",2:"Sump Trough Stale",3:"FT & Sump Data Stale",4:"Solenoid Open / Low Flow",5:"Sump Level Too Low",6:"System Low In Water"};
 		if (ac !== 99) {
-			opModeHtml = '<div style="background:#fadbd8;color:#000;font-size:11px;font-weight:bold;padding:0 6px;margin-top:2px;border-radius:4px;width:100%;box-sizing:border-box;">' + (alertMsgs[ac] || ("Alert Code " + ac)) + '</div>';
+			opModeHtml = '<span style="display:block;background:#fadbd8;color:#000;font-weight:bold;padding:0 6px;border-radius:4px;">' + (alertMsgs[ac] || ("Alert Code " + ac)) + '</span>';
 		} else {
-			opModeHtml = '<div style="background:#d5f5e3;color:#000;font-size:11px;font-weight:bold;padding:0 6px;margin-top:2px;border-radius:4px;width:100%;box-sizing:border-box;">&nbsp;</div>';
+			opModeHtml = '<span style="display:block;background:#d5f5e3;border-radius:4px;">&nbsp;</span>';
 		}
 
 		var fishColor = levelColor(findSW("Fish Tank Height"), findSW("Minimum Fish Tank Level"), findSW("Maximum Fish Tank Level"), findPW("Fish Tank Measured Height")) || 'Gray';
@@ -193,7 +193,7 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 				var sleepDW = findPW("Sleep Time");
 				if (sleepDW) sleepStr = ', ' + sleepDW["Value"] + (sleepDW["Units"] ? sleepDW["Units"] : 's');
 			}
-			opModeHtml = '<div style="font-size:11px;color:#555;margin-top:2px;">' + opLabel + sleepStr + '</div>';
+			opModeHtml = opLabel + sleepStr;
 		}
 		var battDW = findPW("Battery Voltage");
 		var extras = [];
@@ -221,7 +221,7 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 		} else if (battDW) {
 			extras.push(battDW["Value"] + 'V');
 		}
-		if (extras.length) statusExtra = '<span style="font-size:11px;color:#555;margin-left:4px;">' + extras.join('  ') + '</span>';
+		if (extras.length) statusExtra = extras.join('&nbsp;&nbsp;');
 	}
 
 	// Sensor/actuator line — sits between the "last pulse" line and the Status
@@ -275,7 +275,7 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 			parts.push(annabelleWeatherSummary(purposeWords));
 		}
 		if (parts.length) {
-			sensorLineHtml = '<div style="font-size:13px;color:#444;margin-top:4px;text-align:center;">' + parts.join('&nbsp;&nbsp;') + '</div>';
+			sensorLineHtml = parts.join('&nbsp;&nbsp;');
 		}
 	})();
 
@@ -337,26 +337,32 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 		'box-shadow:0 2px 8px rgba(0,0,0,0.08);background:white;display:flex;align-items:stretch;" ' +
 		'onclick="openModal(\'' + modalId + '\')">';
 	html += '<div style="flex:0 0 110px;background:white;padding:10px;display:flex;align-items:center;' +
-		'justify-content:center;border-right:1px solid #eee;">';
+		'justify-content:center;border-right:1px solid #eee;position:relative;">';
 	html += '<img src="' + imgSrc + '" style="width:90px;height:90px;object-fit:contain;" onerror="this.style.display=\'none\'">';
+	html += deviceViewsNoGpsBadge(telepathon);
 	html += '</div>';
 	var cardAgeSec = Math.floor(ageSeconds);
-	html += '<div id="tpText_' + safeId + '" style="flex:1;padding:14px;background:#fafafa;display:flex;flex-direction:column;justify-content:center;">';
+	// Six lines on every card, whatever the device (2026-11-02, Ari): name, warning, time, sensors, mode,
+	// power/status. Each has a fixed height, is centred and never wraps (too long ends in "..."), and an
+	// empty one keeps its place, so every card is the same height.
+	function cardLine(heightPx, content, extraStyle) {
+		return '<div style="height:' + heightPx + 'px;line-height:' + heightPx + 'px;text-align:center;white-space:nowrap;' +
+			'overflow:hidden;text-overflow:ellipsis;' + (extraStyle || '') + '">' + (content || '&nbsp;') + '</div>';
+	}
+	html += '<div id="tpText_' + safeId + '" style="flex:1;min-width:0;padding:10px 12px;background:#fafafa;display:flex;flex-direction:column;justify-content:center;">';
 	// Daffodil "Op Mode" = opMode bit0 = USB programming jumper fitted - flag it on the card itself
 	// (not just the detail popup) since left on it drains the battery overnight.
 	var usbJumperCardDW = deviceType === "Daffodil" ? findPW("Op Mode") : null;
 	var usbJumperOn = usbJumperCardDW && (String(usbJumperCardDW["Value"]).toLowerCase() === 'true' || String(usbJumperCardDW["Value"]) === '1');
-	if (usbJumperOn) {
-		html += '<div style="background:#c62828;color:#fff;border-radius:4px;padding:2px 6px;">' +
-			'<div style="font-weight:bold;font-size:16px;">' + name + '</div>' +
-			'<div style="font-size:11px;">USB header connected</div></div>';
-	} else {
-		html += '<div style="font-weight:bold;font-size:16px;color:#2c3e50;">' + name + '</div>';
-	}
-	// Vital Signs warnings - shown only while something is wrong (2026-10-12):
-	//  - a real reset: red for 24 h for faults like BROWNOUT/PANIC/WDT, orange for only 1 h for a plain
-	//    power-on such as a flash or replug (expected, and still listed in the Vital Signs popup);
-	//  - radio delivery under 80 % (once enough records have arrived to make the % meaningful).
+	// 1. the name (red while the USB header is connected)
+	html += usbJumperOn ?
+		cardLine(24, '<span style="background:#c62828;color:#fff;border-radius:4px;padding:1px 8px;">' + name + '</span>', 'font-weight:bold;font-size:16px;') :
+		cardLine(24, name, 'font-weight:bold;font-size:16px;color:#2c3e50;');
+	// 2. warnings, only while something is wrong: the USB header; a real reset (red for 24 h for faults like
+	// BROWNOUT/PANIC/WDT, orange for only 1 h for a plain power-on such as a flash or replug). Radio delivery
+	// moved to the Diagnostics tab (Radio, Delivery) on 2026-11-02.
+	var badges = [];
+	if (usbJumperOn) badges.push('<span style="background:#c62828;color:#fff;border-radius:4px;padding:0 6px;">USB header connected</span>');
 	if (deviceType === "Daffodil" || deviceType === "Langley") {
 		var vsWords = [];
 		for (var vdi = 0; vdi < denes.length; vdi++) if (denes[vdi]["Name"] === TELEPATHON_DENE_VITAL_SIGNS) vsWords = denes[vdi]["DeneWords"] || [];
@@ -364,7 +370,6 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 			for (var vwi = 0; vwi < vsWords.length; vwi++) if (vsWords[vwi]["Name"] === n) return vsWords[vwi]["Value"];
 			return null;
 		};
-		var vsBadges = [];
 		var resetReason = vsVal("Last Reset Reason");
 		var resetTime = parseInt(vsVal("Last Reset Time"));
 		if (resetReason && resetTime > 0) {
@@ -373,16 +378,13 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 			if (resetAgeSec >= 0 && resetAgeSec < resetBadgeSec) {
 				var resetAgeStr = resetAgeSec < 3600 ? Math.round(resetAgeSec / 60) + ' min' : Math.round(resetAgeSec / 3600) + ' h';
 				var resetBg = VITAL_SIGNS_BAD_RESETS[resetReason] ? '#c62828' : '#e67e22';
-				vsBadges.push('<span style="background:' + resetBg + ';color:#fff;border-radius:4px;padding:0 6px;">&#9888; Reset ' + resetAgeStr + ' ago (' + resetReason + ')</span>');
+				badges.push('<span style="background:' + resetBg + ';color:#fff;border-radius:4px;padding:0 6px;">&#9888; Reset ' + resetAgeStr + ' ago (' + resetReason + ')</span>');
 			}
 		}
-		var deliveryPct = parseFloat(vsVal("Delivery Percent"));
-		var recordsReceived = parseInt(vsVal("Records Received"));
-		if (!isNaN(deliveryPct) && recordsReceived >= 10 && deliveryPct < 80) {
-			vsBadges.push('<span style="background:#ef6c00;color:#fff;border-radius:4px;padding:0 6px;">&#128246; ' + Math.round(deliveryPct) + '% delivered</span>');
-		}
-		if (vsBadges.length) html += '<div style="font-size:11px;font-weight:bold;margin-top:3px;display:flex;flex-wrap:wrap;gap:4px;">' + vsBadges.join('') + '</div>';
 	}
+	html += cardLine(18, badges.join(' '), 'font-size:11px;font-weight:bold;');
+	// 3. when
+	var timeLine = '';
 	if (localTime) {
 		var localTimeRaw = String(localTime);
 		var localTimeShort = localTimeRaw.replace(/^\d{4}\//, '');
@@ -395,14 +397,13 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 				if (dateStr === todayStr) localTimeShort = dm[4];
 			}
 		}
-		html += '<div style="font-size:12px;color:#888;margin-top:4px;">' + localTimeShort +
-			'&nbsp;<span id="tpAge_' + safeId + '" style="color:' + statusColor + ';font-weight:bold;">(' + cardAgeSec + 's ago)</span></div>';
+		timeLine = localTimeShort + '&nbsp;<span id="tpAge_' + safeId + '" style="color:' + statusColor + ';font-weight:bold;">(' + cardAgeSec + 's ago)</span>';
 	}
-	if (sensorLineHtml) html += sensorLineHtml;
-	if (opModeHtml) html += opModeHtml;
-	html += '<div style="margin-top:4px;text-align:center;">';
-	html += statusExtra;
-	html += '</div>';
+	html += cardLine(18, timeLine, 'font-size:12px;color:#888;');
+	// 4. sensors (Chinampa's 25 px level squares need the height), 5. mode or alert, 6. power / status
+	html += cardLine(28, sensorLineHtml, 'font-size:13px;color:#444;');
+	html += cardLine(18, opModeHtml, 'font-size:11px;color:#555;');
+	html += cardLine(18, statusExtra, 'font-size:11px;color:#555;');
 	html += '</div>';
 	html += '</div>';
 	html += '</div>';
@@ -416,11 +417,11 @@ function buildTelepathonDetailView(telepathon, idSuffix, deviceType) {
 	var name = telepathon["Name"];
 	var safeId = name.replace(/[^a-zA-Z0-9]/g, '_') + (idSuffix || '');
 	if (deviceType === undefined) deviceType = deviceViewsTypeOf(telepathon);
-	return (name === "Chinampa" || deviceType === "Chinampa") ? buildChinampaContent(telepathon, safeId) :
+	return deviceViewsNoGpsBanner(telepathon) + ((name === "Chinampa" || deviceType === "Chinampa") ? buildChinampaContent(telepathon, safeId) :
 		deviceType === "Daffodil" ? buildDaffodilContent(telepathon) :
 		deviceType === "Langley" ? buildLangleyContent(telepathon) :
 		deviceType === "Annabelle" ? buildAnnabelleContent(telepathon) :
-		buildTelepathonDetailContent(telepathon);
+		buildTelepathonDetailContent(telepathon));
 }
 
 // Chinampa's inline 24h water level chart (Fish Tank and Sump Trough), into its container in the detail view

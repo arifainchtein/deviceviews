@@ -181,6 +181,10 @@ function buildVitalSignsPanel(telepathon, tpName, i2cBitNames, repo, branch) {
 	var reasonDW = dw("Last Reset Reason");
 	var reasonColor = reasonDW && VITAL_SIGNS_BAD_RESETS[reasonDW["Value"]] ? '#e74c3c' : (reasonDW && reasonDW["Value"] === "POWERON" ? '#e67e22' : null);
 
+	// under 80 % once enough records have arrived to make the % meaningful
+	var deliveryPctDW = dw("Delivery Percent"), recordsReceivedDW = dw("Records Received");
+	var deliveryLow = deliveryPctDW && recordsReceivedDW && parseInt(recordsReceivedDW["Value"]) >= 10 && parseFloat(deliveryPctDW["Value"]) < 80;
+
 	var receivedDW = dw("Vital Signs Received Time");
 	html += '<div style="margin-bottom:6px;font-size:12px;">Hypnogram: ' +
 		'<button class="btn btn-xs btn-primary vital-signs-hypnogram" data-telepathonname="' + tpName + '" data-hours="24">24h</button> ' +
@@ -243,7 +247,8 @@ function buildVitalSignsPanel(telepathon, tpName, i2cBitNames, repo, branch) {
 		row('Panel Current', 'TX Panel Current') +
 		row('V50_I', 'TX V50I'));
 	html += group('Radio',
-		row('Delivery', 'Delivery Percent') +
+		// a low delivery is flagged here, not on the card (2026-11-02, Ari)
+		row('Delivery', 'Delivery Percent', deliveryLow ? { color: '#ef6c00', format: function(v) { return '&#9888; ' + v; } } : {}) +
 		row('Records Missed', 'Records Missed') +
 		row('TX Failures', 'LoRa TX Fail Count') +
 		row('RSSI', 'Vital Signs RSSI') +
