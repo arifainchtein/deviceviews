@@ -218,6 +218,15 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 			if (uptimeDW) extras.push('Up ' + deviceViewsFormatAge(parseFloat(uptimeDW["Value"])).replace(' ago', ''));
 			var freeDW = findPW("Free Memory");
 			if (freeDW) extras.push(Math.round(parseFloat(freeDW["Value"]) / 1024) + ' KB free');
+		} else if (deviceType === "Cleotilde") {
+			// 2026-11-04: Cleotilde (network security, watches the farm's router): internet and its own power
+			var netUpDW = findPW("Internet Up"), latDW = findPW("Internet Latency"), boardVDW = findPW("Board Voltage");
+			if (netUpDW) {
+				var up = netUpDW["Value"] === true || netUpDW["Value"] === "true";
+				extras.push(up ? 'Internet up' + (latDW ? ' ' + latDW["Value"] + ' ms' : '')
+					: '<span style="color:#c62828;font-weight:bold;">Internet DOWN</span>');
+			}
+			if (boardVDW) extras.push(boardVDW["Value"] + 'V');
 		} else if (battDW) {
 			extras.push(battDW["Value"] + 'V');
 		}
@@ -273,6 +282,8 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 			addPart('Fence', findPW("Fence Voltage Avg"));
 		} else if (deviceType === "Annabelle") {
 			parts.push(annabelleWeatherSummary(purposeWords));
+		} else if (deviceType === "Cleotilde") {
+			parts.push(cleotildeSecuritySummary(purposeWords));
 		}
 		if (parts.length) {
 			sensorLineHtml = parts.join('&nbsp;&nbsp;');
@@ -483,6 +494,27 @@ function deviceViewsTypeOf(telepathon) {
 }
 
 // Annabelle's weather forecast in a few words, coloured: when it last went out, or that it did not (2026-11-01).
+// Cleotilde's card line (2026-11-04): suspicious traffic events today (red when any), today's traffic and
+// the unknown devices. Only the summary Cleotilde sends; destinations and DNS stay on the farm's own page.
+function cleotildeSecuritySummary(purposeWords) {
+	function pw(n) {
+		for (var i = 0; i < purposeWords.length; i++) if (purposeWords[i]["Name"] === n) return purposeWords[i]["Value"];
+		return null;
+	}
+	var parts = [];
+	var events = pw("Suspicious Events Today");
+	if (events !== null) {
+		var n = parseInt(events, 10) || 0;
+		parts.push(n > 0 ? '<span style="color:#c62828;font-weight:bold;">' + n + ' alert' + (n == 1 ? '' : 's') + ' today</span>'
+			: '<span style="color:#2e7d32;">No alerts today</span>');
+	}
+	var up = pw("Upload Today"), down = pw("Download Today");
+	if (up !== null && down !== null) parts.push('\u2191' + up + ' \u2193' + down + ' MB');
+	var unknown = pw("Unknown Devices");
+	if (unknown !== null && parseInt(unknown, 10) > 0) parts.push(unknown + ' unknown');
+	return parts.join('&nbsp;&nbsp;');
+}
+
 function annabelleWeatherSummary(purposeWords) {
 	function pw(n) {
 		for (var i = 0; i < purposeWords.length; i++) if (purposeWords[i]["Name"] === n) return purposeWords[i]["Value"];
