@@ -3,7 +3,8 @@
   <!-- deviceviews (2026-10-31, DevicesDigitalStables design doc §18): a device's card, detail popup and charts,
        one copy for the Teleonome webapp and devices.digitalstables.com. Only web files: they sit under
        META-INF/resources/deviceviews/, so a Servlet 3 container serves them at /deviceviews/... from this jar
-       inside WEB-INF/lib. Build with "mvn install" before building either webapp. -->
+       inside WEB-INF/lib. "mvn package" also installs it into the local repository (2026-11-04, like the
+       framework), so the Pi's buildorgans.sh (sudo mvn clean package) can build deviceviews and a webapp in one go. -->
   <modelVersion>4.0.0</modelVersion>
   <groupId>com.digitalstables</groupId>
   <artifactId>deviceviews</artifactId>
@@ -13,4 +14,27 @@
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
+  <build>
+    <plugins>
+      <!-- package = package + install into the local repository, so a webapp built right after finds this version -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-install-plugin</artifactId>
+        <version>3.1.4</version>
+        <executions>
+          <execution>
+            <id>AddToLocalRepo</id>
+            <phase>package</phase>
+            <goals>
+              <goal>install-file</goal>
+            </goals>
+            <configuration>
+              <file>${project.build.directory}/${project.build.finalName}.jar</file>
+              <pomFile>${project.basedir}/pom.xml</pomFile>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 </project>
