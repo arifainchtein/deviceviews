@@ -806,6 +806,9 @@ function buildLangleyContent(telepathon) {
 		row('Solar Current', findDW(pw, 'Solar Current'), tpName, 'Purpose') +
 		row('Battery Voltage', battDW, tpName, 'Purpose') +
 		row('Battery Current', findDW(pw, 'Battery Current'), tpName, 'Purpose');
+	// the battery's own temperature, Valentino's thermistor (LangleyData.batteryTemperature, 2026-11-12); no row when
+	// the thermistor is not fitted or the Langley's firmware is older
+	powerRows += row('Battery Temperature', findDW(pw, 'Battery Temperature'), tpName, 'Purpose');
 	var socVal = DeviceViewsHost.setting(tpName, DENEWORD_PULSE_TASK_BATTERY_SOC_LIVE);
 	if (socVal !== null && socVal !== undefined) {
 		powerRows += '<tr><td style="width:40%;">Battery SOC</td><td><strong>' + parseFloat(socVal).toFixed(1) + '%</strong></td>'
