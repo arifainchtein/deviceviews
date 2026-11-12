@@ -1179,7 +1179,9 @@ function buildAnnabelleContent(telepathon) {
 	html += '<li onclick="return teleonomeShowTab(\'anna-health-' + safeId + '\', this)"><a href="#" style="' + sub + '">Health</a></li>';
 	html += '</ul><div class="tab-content">';
 
-	html += '<div class="tab-pane active" id="anna-weather-' + safeId + '">' + table(
+	// her 5-day forecast (firmware 14, the "Weather Forecast" dene - deviceviews-weather.js), then how it went out
+	html += '<div class="tab-pane active" id="anna-weather-' + safeId + '">' +
+		(typeof DeviceViewsWeather !== 'undefined' ? '<div style="margin-bottom:10px;">' + DeviceViewsWeather.html([telepathon], {title: false}) + '</div>' : '') + table(
 		row('Last forecast', weatherTime && weatherTime > 0 ? new Date(weatherTime * 1000).toLocaleString() + ' <span style="color:#999;font-weight:normal;">(' + deviceViewsFormatAge(weatherAge) + ')</span>' : 'none since Annabelle started') +
 		row('Result', warn(val("Weather Forecast Result") || '—', !weatherSent)) +
 		row('Started by', val("Weather Trigger") || '—') +

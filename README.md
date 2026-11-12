@@ -40,6 +40,8 @@ Servlet 3 container (Tomcat 7+) serves it at `/deviceviews/...` straight from th
 | `deviceviews-history.js` | the chart popup, the 1h / 24h / 7d buttons, Chinampa's water level chart |
 | `deviceviews-detail.js` | the detail popup for each device type: Daffodil, Langley, Chinampa, and a generic one |
 | `deviceviews-card.js` | `buildTelepathonCardView(telepathon)`: the card, and the popup it opens |
+| `deviceviews-weather.js` | `DeviceViewsWeather`: the farm's 5-day forecast from the "Weather Forecast" dene of Annabelle's telepathon (OpenWeather, downloaded by Annabelle only - the forecast the field devices were sent). The Weather pill, the forecast values in tabs and the forecast in Annabelle's details (2026-11-12). Never downloads anything |
+| `deviceviews-tabs.js` | `DeviceViewsTabs.create({...})`: pills (the host's own views, e.g. the map, then Weather, always, then the farm's own tabs) and custom data views: values picked from all the telepathons, tank level colours and the weather forecast (2026-11-08). The host keeps the tabs (`save` / `remove`) |
 | `deviceviews.css` | the chart and popup styles, for hosts other than the Teleonome |
 | `logos/<Type>.svg` | one logo for each device type (Annabelle, Daffodil, Langley, Chinampa, Gloria, ...) |
 
@@ -63,6 +65,8 @@ Servlet 3 container (Tomcat 7+) serves it at `/deviceviews/...` straight from th
    <script src="/deviceviews/deviceviews-history.js"></script>
    <script src="/deviceviews/deviceviews-detail.js"></script>
    <script src="/deviceviews/deviceviews-card.js"></script>
+   <script src="/deviceviews/deviceviews-weather.js"></script>   <!-- the forecast: Weather pill, Annabelle's details -->
+   <script src="/deviceviews/deviceviews-tabs.js"></script>   <!-- optional: pills and custom tabs -->
    <script src="YourHost.js"></script>
    ```
 
