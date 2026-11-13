@@ -350,7 +350,7 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 	html += '<div style="flex:0 0 110px;background:white;padding:10px;display:flex;align-items:center;' +
 		'justify-content:center;border-right:1px solid #eee;position:relative;">';
 	html += '<img src="' + imgSrc + '" style="width:90px;height:90px;object-fit:contain;" onerror="this.style.display=\'none\'">';
-	html += deviceViewsNoGpsBadge(telepathon);
+	html += deviceViewsCardBadges(telepathon);  // No GPS, Relay - bottom left (deviceviews-base.js)
 	html += '</div>';
 	var cardAgeSec = Math.floor(ageSeconds);
 	// Six lines on every card, whatever the device (2026-11-02, Ari): name, warning, time, sensors, mode,

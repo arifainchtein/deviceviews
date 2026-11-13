@@ -61,12 +61,18 @@ function deviceViewsNoGpsText(telepathon) {
 	return 'Data is arriving, but this device sends no GPS position, so it is not on the map.' + (hint ? ' ' + hint : '');
 }
 
-// On the card: a small badge over the logo, the full sentence as its tooltip ('' when it has a place).
+// The look every card badge shares (No GPS, Relay): white bold text on a coloured pill.
+function deviceViewsBadgeStyle(background) {
+	return 'display:inline-block;background:' + background + ';color:#fff;border-radius:10px;padding:1px 6px 1px 4px;' +
+		'font-size:10px;font-weight:bold;line-height:16px;white-space:nowrap;';
+}
+
+// On the card: a small badge, the full sentence as its tooltip ('' when it has a place). Placed by
+// deviceViewsCardBadges, below.
 function deviceViewsNoGpsBadge(telepathon) {
 	if (!deviceViewsMissingLocation(telepathon)) return '';
 	return '<span class="dv-nogps-badge" title="' + deviceViewsNoGpsText(telepathon).replace(/"/g, '&quot;') + '" ' +
-		'style="position:absolute;top:6px;left:6px;background:#ef6c00;color:#fff;border-radius:10px;padding:1px 6px 1px 4px;' +
-		'font-size:10px;font-weight:bold;line-height:16px;white-space:nowrap;">' + deviceViewsNoGpsIcon(13) + ' No GPS</span>';
+		'style="' + deviceViewsBadgeStyle('#ef6c00') + '">' + deviceViewsNoGpsIcon(13) + ' No GPS</span>';
 }
 
 // At the top of the detail (the popup, and the device page itself).
@@ -76,6 +82,44 @@ function deviceViewsNoGpsBanner(telepathon) {
 		'color:#8a4b00;border-radius:6px;padding:6px 10px;margin-bottom:10px;font-size:13px;">' +
 		'<span style="color:#ef6c00;flex:0 0 auto;">' + deviceViewsNoGpsIcon(20) + '</span>' +
 		'<span>' + deviceViewsNoGpsText(telepathon) + '</span></div>';
+}
+
+// ---- Relay (2026-11-13, Ari): the device's own relay mode is on - it resends other devices' packets ----
+// Reported by the device itself (LangleyData.relayStatus -> Purpose "Relay Status"), so any Valentino-based
+// device gets it: Langley now, Gloria next. Not worked out from other devices' Routes - that is how packets
+// arrived, not what the device is doing.
+function deviceViewsIsRelay(telepathon) {
+	var on = false;
+	((telepathon && telepathon["Denes"]) || []).forEach(function(d) {
+		if (d["Name"] !== "Purpose") return;
+		(d["DeneWords"] || []).forEach(function(w) {
+			if (w["Name"] === "Relay Status") on = String(w["Value"]).toLowerCase() === 'true' || String(w["Value"]) === '1';
+		});
+	});
+	return on;
+}
+
+// Two arrows passing each other, in the current colour.
+function deviceViewsRelayIcon(size) {
+	return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" style="vertical-align:middle;" aria-hidden="true">' +
+		'<path d="M4 7h12l-3.5-3.5L14 2l6 6-6 6-1.5-1.5L16 9H4z" fill="currentColor"/>' +
+		'<path d="M20 17H8l3.5 3.5L10 22l-6-6 6-6 1.5 1.5L8 15h12z" fill="currentColor"/></svg>';
+}
+
+// On the card: white on blue ('' when relay is off). Placed by deviceViewsCardBadges, below.
+function deviceViewsRelayBadge(telepathon) {
+	if (!deviceViewsIsRelay(telepathon)) return '';
+	return '<span class="dv-relay-badge" title="Relay on: this device resends other devices\' LoRa packets that need help." ' +
+		'style="' + deviceViewsBadgeStyle('#1565c0') + '">' + deviceViewsRelayIcon(12) + ' Relay</span>';
+}
+
+// All the card's badges, at the bottom left of the logo (2026-11-13, Ari: below the logo, not above),
+// one above the other so a device that is a relay with no GPS shows both ('' when there are none).
+function deviceViewsCardBadges(telepathon) {
+	var badges = [deviceViewsRelayBadge(telepathon), deviceViewsNoGpsBadge(telepathon)].filter(function(b) { return b; });
+	if (!badges.length) return '';
+	return '<div class="dv-card-badges" style="position:absolute;bottom:6px;left:6px;display:flex;flex-direction:column;' +
+		'align-items:flex-start;gap:3px;">' + badges.join('') + '</div>';
 }
 
 // ---- Constants (moved from TeleonomeConstants.js) ----
