@@ -264,11 +264,12 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 			var flow2RateDW = findPW("Flow Rate 2");
 			var tank1LevelDW = findPW("Tank 1 Water Level");
 			var tank2LevelDW = findPW("Tank 2 Water Level");
-			if (flow1RateDW) { var f1n = findSW("Flow 1 Name"); addPart(f1n ? f1n["Value"] : 'Flow 1', flow1RateDW); }
+			// e.g. "PumpF: 40.84l/m 750L Level:88% (139cm)" (Ari, 2026-11-16)
+			if (flow1RateDW) { var f1n = findSW("Flow 1 Name"); parts.push((f1n ? f1n["Value"] : 'Flow 1') + ': ' + parseFloat(flow1RateDW["Value"]).toFixed(2) + (flow1RateDW["Units"] || '')); }
 			// Flow-trough (function 16, e.g. Pool): the meter's running total, in litres.
 			var flow1TotalDW = flow1RateDW ? findPW("Total Millilitres") : null;
 			if (flow1TotalDW && !isNaN(parseFloat(flow1TotalDW["Value"]))) {
-				parts.push('Total: ' + Math.round(parseFloat(flow1TotalDW["Value"]) / 1000) + ' L');
+				parts.push(Math.round(parseFloat(flow1TotalDW["Value"]) / 1000) + 'L');
 			}
 			if (flow2RateDW) { var f2n = findSW("Flow 2 Name"); addPart(f2n ? f2n["Value"] : 'Flow 2', flow2RateDW); }
 			if (tank1LevelDW) { var t1n = findSW("Tank 1 Name"); addPart(t1n ? t1n["Value"] : 'Tank 1', tank1LevelDW); }
@@ -284,9 +285,9 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 				var fullDW = findSW("Full Depth"), fullCm = fullDW ? parseFloat(fullDW["Value"]) : NaN;
 				var levelLabel = (findSW("Trough Name") || {})["Value"] || 'Level';
 				if (!isNaN(fullCm) && fullCm > 0) {
-					parts.push(levelLabel + ': ' + Math.round(depthCm / fullCm * 100) + '% (' + Math.round(depthCm) + ' cm)');
+					parts.push(levelLabel + ':' + Math.round(depthCm / fullCm * 100) + '% (' + Math.round(depthCm) + 'cm)');
 				} else {
-					parts.push(levelLabel + ': ' + Math.round(depthCm) + ' cm deep');
+					parts.push(levelLabel + ':' + Math.round(depthCm) + 'cm');
 				}
 			}
 			if (!parts.length) {
