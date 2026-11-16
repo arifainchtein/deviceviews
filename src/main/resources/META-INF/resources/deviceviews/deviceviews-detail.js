@@ -498,7 +498,7 @@ function buildDaffodilContent(telepathon) {
 
 	var noGraphFields = {"Op Mode":1,"Weather Fresh":1,"INA219 Found":1,"BH1750 Found":1,"ADS1115 Found":1,"RTC Found":1,"DS18B20 Found":1,"SHT Found":1,"Invalid Time":1,"Using Solar Power":1,"Local Time":1,"Source Original Time":1,"Operating Status":1};
 	var cardGroups = [
-		{ id: 'daff-sensors-' + safeId, title: "Sensors", fields: ["Measured Height", "Measured Height 2", "Water Temperature", "Sceptic Available", "Light Level", "Outdoor Temperature", "Outdoor Humidity", "Internal Temperature", "Tank 1 Pressure Psi", "Tank 1 Water Level", "Tank 2 Pressure Psi", "Tank 2 Water Level"] },
+		{ id: 'daff-sensors-' + safeId, title: "Sensors", fields: ["Flow Rate 1", "Total Millilitres", "Flow Rate 2", "Measured Height", "Measured Height 2", "Water Temperature", "Sceptic Available", "Light Level", "Outdoor Temperature", "Outdoor Humidity", "Internal Temperature", "Tank 1 Pressure Psi", "Tank 1 Water Level", "Tank 2 Pressure Psi", "Tank 2 Water Level"] },
 		{ id: 'daff-power-' + safeId,   title: "Power",   fields: ["Panel Voltage", "Panel Current", "Battery Voltage", "Battery Current", "V50 Voltage", "Led Brightness", "Operating Status", "Async Data", "Wake Time Sec", "Sleep Time", "Estimated Runtime"] },
 		{ id: 'daff-comms-' + safeId,   title: "Comms",   fields: ["rssi", "snr", "Digital Stables Upload", "Lora Active", "ds Last Upload"] },
 		{ id: 'daff-diag-' + safeId,    title: "Diagnostics", fields: ["RTC Battery Volt", "Op Mode", "Weather Fresh", "INA219 Found", "BH1750 Found", "ADS1115 Found", "RTC Found", "DS18B20 Found", "SHT Found", "Invalid Time", "Using Solar Power", "Source Original Time", "Local Time"] }
@@ -652,6 +652,153 @@ function buildDaffodilContent(telepathon) {
 	return html;
 }
 
+// ---- Solar panel post mount (2026-11-15, SolarPanelMount/PROMPT.md section 1): the seasonal positions ----
+// The panel sits on two arms hinged on an M10 bolt through the post, 50 below the post top; a prop pivoting
+// a = 300 along each arm, P = 300 between hole centres, pins through the post with an M8 peg. For a tilt θ
+// from horizontal the peg hole is d = a·sinθ + sqrt(P² − (a·cosθ)²) below the hinge (600·sinθ, as a = P).
+// Tilts follow the sun's average height over each season: |latitude| − 15 / − 7 / + 7 / + 15 (summer,
+// spring, autumn, winter), whole degrees, kept to 5–70°. Pure: no DOM, so it can be tested on its own.
+var SOLAR_MOUNT = {armPivot: 300, prop: 300, hingeBelowTop: 50, minTilt: 5, maxTilt: 70, minPegSpacing: 30};
+
+function deviceViewsSolarMountPositions(latitude) {
+	var lat = parseFloat(latitude);
+	if (isNaN(lat) || Math.abs(lat) > 90) return null;
+	var south = lat < 0;
+	var phi = Math.abs(lat);
+	var a = SOLAR_MOUNT.armPivot, P = SOLAR_MOUNT.prop;
+	// change dates: southern summer starts 1 Dec; the northern hemisphere is six months on
+	var seasons = [
+		{season: "Summer", offset: -15, month: south ? 12 : 6},
+		{season: "Autumn", offset: 7, month: south ? 3 : 9},
+		{season: "Winter", offset: 15, month: south ? 6 : 12},
+		{season: "Spring", offset: -7, month: south ? 9 : 3}
+	];
+	var monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+	var warnings = [];
+	var rows = seasons.map(function(s) {
+		var wanted = Math.round(phi + s.offset);
+		var tilt = Math.min(SOLAR_MOUNT.maxTilt, Math.max(SOLAR_MOUNT.minTilt, wanted));
+		if (tilt !== wanted) warnings.push(s.season + " would be " + wanted + "°, kept to " + tilt + "°.");
+		var t = tilt * Math.PI / 180;
+		var below = Math.round(a * Math.sin(t) + Math.sqrt(Math.max(0, P * P - Math.pow(a * Math.cos(t), 2))));
+		return {season: s.season, month: s.month, changeOn: "1 " + monthNames[s.month - 1], tilt: tilt, wantedTilt: wanted,
+			pegBelowHinge: below, pegBelowTop: below + SOLAR_MOUNT.hingeBelowTop};
+	});
+	// adjacent peg holes need about 30 between centres, else one hole has to serve both seasons
+	var byDepth = rows.slice().sort(function(x, y) { return x.pegBelowHinge - y.pegBelowHinge; });
+	for (var i = 1; i < byDepth.length; i++) {
+		var gap = byDepth[i].pegBelowHinge - byDepth[i - 1].pegBelowHinge;
+		if (gap < SOLAR_MOUNT.minPegSpacing) warnings.push(byDepth[i - 1].season + " and " + byDepth[i].season +
+			" peg holes are only " + gap + " mm apart: use one hole for both.");
+	}
+	return {latitude: lat, southern: south, faces: south ? "true north" : "true south", rows: rows, warnings: warnings};
+}
+
+// The season a month (1-12) falls in, from the positions' change dates.
+function deviceViewsSolarMountSeasonFor(positions, month) {
+	var best = null, bestBack = 13;
+	positions.rows.forEach(function(r) {
+		var back = (month - r.month + 12) % 12;
+		if (back < bestBack) { bestBack = back; best = r; }
+	});
+	return best;
+}
+
+// The device's latitude: the host's (devices.digitalstables.com: a location set on the device page), else
+// the telepathon's own GPS.
+function deviceViewsMountLocationOf(telepathon) {
+	var fromHost = DeviceViewsHost.location ? DeviceViewsHost.location(telepathon) : null;
+	if (fromHost && typeof fromHost.latitude === 'number' && !isNaN(fromHost.latitude)) return fromHost;
+	return deviceViewsLocationOf(telepathon);
+}
+
+// The seasonal positions table for a solar-powered device's panel mount (Langley now, Gloria next), with
+// the button that downloads the whole drawing sheet made for this latitude.
+function buildSolarMountPanel(telepathon) {
+	var where = deviceViewsMountLocationOf(telepathon);
+	var pos = where ? deviceViewsSolarMountPositions(where.latitude) : null;
+	if (!pos) {
+		return '<p class="text-muted" style="font-size:13px;padding:8px 4px;">The panel tilts need the device\'s latitude. ' +
+			'It has no location yet: set one and this table fills in.</p>';
+	}
+	var now = deviceViewsSolarMountSeasonFor(pos, new Date().getMonth() + 1);
+	function attr(v) { return String(v === null || v === undefined ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+	var html = '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px;">' +
+		'<span style="font-size:12px;color:#666;">Latitude ' + Math.abs(pos.latitude).toFixed(4) + '° ' +
+		(pos.southern ? 'S' : 'N') + ' · panel faces ' + pos.faces + ' · all dimensions in mm</span>' +
+		'<button type="button" class="btn btn-xs btn-primary" onclick="return deviceViewsDownloadSolarMount(this)"' +
+		' data-name="' + attr(telepathon["Name"]) + '" data-latitude="' + attr(where.latitude) + '" data-longitude="' + attr(where.longitude) + '">' +
+		'Download Panel Mount</button></div>';
+	html += '<table class="table table-condensed table-striped" style="margin-bottom:6px;font-size:12px;">' +
+		'<tr><th>Season</th><th>Change on</th><th style="text-align:right;">Tilt</th>' +
+		'<th style="text-align:right;">Peg hole below hinge</th><th style="text-align:right;">Peg hole below post top</th></tr>';
+	pos.rows.forEach(function(r) {
+		var here = r === now;
+		html += '<tr' + (here ? ' style="font-weight:bold;background:#fff6d6;"' : '') + '><td>' + r.season +
+			(here ? ' <span class="label label-warning" style="font-size:9px;vertical-align:middle;">now</span>' : '') + '</td>' +
+			'<td>' + r.changeOn + '</td><td style="text-align:right;">' + r.tilt + '°</td>' +
+			'<td style="text-align:right;">' + r.pegBelowHinge + '</td><td style="text-align:right;">' + r.pegBelowTop + '</td></tr>';
+	});
+	html += '</table>';
+	pos.warnings.forEach(function(w) {
+		html += '<div style="background:#fff3e0;border-left:3px solid #ef6c00;color:#8a4b00;padding:4px 8px;margin-bottom:4px;font-size:12px;">' + w + '</div>';
+	});
+	html += '<div style="font-size:11px;color:#888;">Geometry: the prop pivots ' + SOLAR_MOUNT.armPivot + ' mm along the arm and is ' +
+		SOLAR_MOUNT.prop + ' mm between hole centres, so each peg hole is <b>' + (2 * SOLAR_MOUNT.armPivot) + ' × sin(tilt)</b> below the hinge, ' +
+		'which is ' + SOLAR_MOUNT.hingeBelowTop + ' mm below the post top.</div>';
+	return html;
+}
+
+// Everything the drawing sheet needs for one device: the seasonal positions plus where it is and the
+// winter ground clearance (lowest point of the arm (armLength − 40)·sin(winter) + 21 below the hinge, the
+// ground 1150 below the hinge; under 300 is a warning). Pure, like deviceViewsSolarMountPositions.
+function deviceViewsSolarMountDocument(name, latitude, longitude, today) {
+	var pos = deviceViewsSolarMountPositions(latitude);
+	if (!pos) return null;
+	var winter = pos.rows.filter(function(r) { return r.season === "Winter"; })[0];
+	var lowest = Math.round((900 - 40) * Math.sin(winter.tilt * Math.PI / 180) + 21);
+	pos.winterClearance = 1150 - lowest;
+	if (pos.winterClearance < 300) pos.warnings.push("In winter the arm's low end is only " + pos.winterClearance + " mm above the ground.");
+	var lon = parseFloat(longitude);
+	pos.longitude = isNaN(lon) ? null : lon;
+	pos.name = name || "";
+	pos.made = today || "";
+	pos.mount = SOLAR_MOUNT;
+	return pos;
+}
+
+// The "Download Panel Mount" button: fills the drawing sheet template (/deviceviews/solarmount/) with this
+// device's numbers and saves it as one self-contained HTML file, which prints to A4 (Print / Save as PDF).
+function deviceViewsDownloadSolarMount(button) {
+	var name = button.getAttribute('data-name');
+	var lat = parseFloat(button.getAttribute('data-latitude'));
+	var d = new Date();
+	function two(n) { return (n < 10 ? '0' : '') + n; }
+	var doc = deviceViewsSolarMountDocument(name, lat, button.getAttribute('data-longitude'),
+		d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate()));
+	if (!doc) return false;
+	var label = button.textContent;
+	button.disabled = true;
+	button.textContent = 'Preparing…';
+	fetch('/deviceviews/solarmount/solar-post-mount.html', {cache: 'no-store'})
+		.then(function(r) { if (!r.ok) throw new Error('template ' + r.status); return r.text(); })
+		.then(function(template) {
+			var json = JSON.stringify(doc).replace(/</g, '\\u003c');
+			var html = template.replace('window.MOUNT = null;', function() { return 'window.MOUNT = ' + json + ';'; });
+			var url = URL.createObjectURL(new Blob([html], {type: 'text/html'}));
+			var a = document.createElement('a');
+			a.href = url;
+			a.download = (name || 'Solar').replace(/[^A-Za-z0-9_-]+/g, '-') + '-panel-mount-' +
+				Math.abs(lat).toFixed(2) + (lat < 0 ? 'S' : 'N') + '.html';
+			document.body.appendChild(a);
+			a.click();
+			setTimeout(function() { URL.revokeObjectURL(url); a.remove(); }, 2000);
+		})
+		.catch(function() { alert('Could not prepare the panel mount document. Please try again.'); })
+		.then(function() { button.disabled = false; button.textContent = label; });
+	return false;
+}
+
 // Field names below come from LangleyDataDeserializer.java (com.teleonome.framework
 // .microcontroller.annabellemicrocontroller) — the "Purpose" DeneWords it emits for a
 // Langley electric-fence monitor. Operating Status shares the same 1-5 taxonomy as
@@ -765,6 +912,7 @@ function buildLangleyContent(telepathon) {
 	html += '<ul class="nav nav-pills" style="margin-bottom:8px;flex-wrap:wrap;">';
 	html += '<li class="active" onclick="return teleonomeShowTab(\'lang-energizer-' + safeId + '\', this)"><a href="#" style="' + subPillStyle + '">Energizer</a></li>';
 	html += '<li onclick="return teleonomeShowTab(\'lang-power-' + safeId + '\', this)"><a href="#" style="' + subPillStyle + '">Power</a></li>';
+	html += '<li onclick="return teleonomeShowTab(\'lang-mount-' + safeId + '\', this)"><a href="#" style="' + subPillStyle + '">Solar Mount</a></li>';
 	html += '<li onclick="return teleonomeShowTab(\'lang-comms-' + safeId + '\', this)"><a href="#" style="' + subPillStyle + '">Comms</a></li>';
 	html += '<li onclick="return teleonomeShowTab(\'lang-diag-' + safeId + '\', this)"><a href="#" style="' + subPillStyle + '">Diagnostics</a></li>';
 	html += '</ul>';
@@ -819,6 +967,11 @@ function buildLangleyContent(telepathon) {
 		row('Estimated Runtime', findDW(pw, 'Estimated Runtime'), tpName, 'Purpose');
 	if (opStatusDW) powerRows += '<tr><td style="width:40%;">Operating Status</td><td><strong>' + opLabel + '</strong></td><td></td></tr>';
 	html += table(powerRows);
+	html += '</div>';
+
+	// Solar Mount: the panel's seasonal tilt and peg hole for each season, from the device's latitude
+	html += '<div class="tab-pane" id="lang-mount-' + safeId + '">';
+	html += buildSolarMountPanel(telepathon);
 	html += '</div>';
 
 	// Comms: the LoRa link to the Teleonome

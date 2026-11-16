@@ -265,9 +265,30 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 			var tank1LevelDW = findPW("Tank 1 Water Level");
 			var tank2LevelDW = findPW("Tank 2 Water Level");
 			if (flow1RateDW) { var f1n = findSW("Flow 1 Name"); addPart(f1n ? f1n["Value"] : 'Flow 1', flow1RateDW); }
+			// Flow-trough (function 16, e.g. Pool): the meter's running total, in litres.
+			var flow1TotalDW = flow1RateDW ? findPW("Total Millilitres") : null;
+			if (flow1TotalDW && !isNaN(parseFloat(flow1TotalDW["Value"]))) {
+				parts.push('Total: ' + Math.round(parseFloat(flow1TotalDW["Value"]) / 1000) + ' L');
+			}
 			if (flow2RateDW) { var f2n = findSW("Flow 2 Name"); addPart(f2n ? f2n["Value"] : 'Flow 2', flow2RateDW); }
 			if (tank1LevelDW) { var t1n = findSW("Tank 1 Name"); addPart(t1n ? t1n["Value"] : 'Tank 1', tank1LevelDW); }
 			if (tank2LevelDW) { var t2n = findSW("Tank 2 Name"); addPart(t2n ? t2n["Value"] : 'Tank 2', tank2LevelDW); }
+			// Ultrasonic trough level (2026-11-16). Measured Height is the sensor-to-water distance, which
+			// on its own says little; with the Sensors dene's Maximum Height (sensor to bottom) it gives the
+			// water depth, and with Full Depth (the website's Level Setup "Full depth",
+			// troughlevelmaximumcm) a % full - same maths as the device website's level card.
+			var mhDW = findPW("Measured Height"), maxHDW = findSW("Maximum Height");
+			var mh = mhDW ? parseFloat(mhDW["Value"]) : NaN, maxH = maxHDW ? parseFloat(maxHDW["Value"]) : NaN;
+			if (parts.length && !isNaN(mh) && mh > 0 && !isNaN(maxH) && maxH > 0) {
+				var depthCm = Math.max(0, maxH - mh);
+				var fullDW = findSW("Full Depth"), fullCm = fullDW ? parseFloat(fullDW["Value"]) : NaN;
+				var levelLabel = (findSW("Trough Name") || {})["Value"] || 'Level';
+				if (!isNaN(fullCm) && fullCm > 0) {
+					parts.push(levelLabel + ': ' + Math.round(depthCm / fullCm * 100) + '% (' + Math.round(depthCm) + ' cm)');
+				} else {
+					parts.push(levelLabel + ': ' + Math.round(depthCm) + ' cm deep');
+				}
+			}
 			if (!parts.length) {
 				// Functions without dedicated flow/tank fields (Septic Tank, Water
 				// Trough, Temp & Soil Moisture, Light Detector, ...) - fall back to

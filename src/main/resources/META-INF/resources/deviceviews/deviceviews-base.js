@@ -21,6 +21,9 @@ var DeviceViewsHost = {
 	// Whether the device has a place on a map: true / false when the host knows (devices.digitalstables.com:
 	// a location set on the device page counts), null to go by the telepathon's own Latitude / Longitude.
 	isLocated: function(telepathon) { return null; },
+	// The device's place, {latitude, longitude}, when the host knows it (devices.digitalstables.com: a location
+	// set on the device page), null to go by the telepathon's own. Used for the solar mount's seasonal tilts.
+	location: function(telepathon) { return null; },
 	// One sentence after "no GPS position" saying how to place the device by hand on this host ('' = none).
 	noLocationHint: function(telepathon) { return ''; }
 };
