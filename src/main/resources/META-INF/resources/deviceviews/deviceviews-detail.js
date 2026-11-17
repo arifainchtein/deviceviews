@@ -129,6 +129,11 @@ function buildDeviceIdentityPanel(telepathon, repo, branch) {
 	html += row('PCBs', val("PCBs"));
 	html += row('Power Source', val("Power Source"));
 	html += row('Battery', val("Battery"));
+	// Where the device says it is (its Latitude/longitude words, any Dene) - separate rows, 6 decimals
+	// (~0.1 m), so a rounded location shows up here (2026-11-17: Annabelle sent Pool's with 2 decimals).
+	var loc = deviceViewsLocationOf(telepathon);
+	html += row('Latitude', loc ? loc.latitude.toFixed(6) : null);
+	html += row('Longitude', loc ? loc.longitude.toFixed(6) : null);
 	html += row('Commissioned', epochToLocal(val("Commission Date")));
 	html += row('Last Reported', epochToLocal(val("Device Identity Received Time")) + ' <span class="text-muted" style="font-weight:normal;">(' + (val("Identity Reason") || '') + ')</span>');
 	html += '</table>';
