@@ -496,11 +496,11 @@ function buildDaffodilContent(telepathon) {
 	html += '</ul>';
 	html += '<div class="tab-content">';
 
-	var noGraphFields = {"Op Mode":1,"Weather Fresh":1,"INA219 Found":1,"BH1750 Found":1,"ADS1115 Found":1,"RTC Found":1,"DS18B20 Found":1,"SHT Found":1,"Invalid Time":1,"Using Solar Power":1,"Local Time":1,"Source Original Time":1,"Operating Status":1};
+	var noGraphFields = {"Op Mode":1,"Weather Fresh":1,"INA219 Found":1,"BH1750 Found":1,"ADS1115 Found":1,"RTC Found":1,"DS18B20 Found":1,"SHT Found":1,"Invalid Time":1,"Using Solar Power":1,"Local Time":1,"Source Original Time":1,"Operating Status":1,"Relay Status":1};
 	var cardGroups = [
-		{ id: 'daff-sensors-' + safeId, title: "Sensors", fields: ["Flow Rate 1", "Total Millilitres", "Flow Rate 2", "Measured Height", "Measured Height 2", "Water Temperature", "Sceptic Available", "Light Level", "Outdoor Temperature", "Outdoor Humidity", "Internal Temperature", "Tank 1 Pressure Psi", "Tank 1 Water Level", "Tank 2 Pressure Psi", "Tank 2 Water Level"] },
+		{ id: 'daff-sensors-' + safeId, title: "Sensors", fields: ["Flow Rate 1", "Total Millilitres", "Flow Rate 2", "Measured Height", "Trough Level", "Trough Depth", "Measured Height 2", "Water Temperature", "Sceptic Available", "Light Level", "Outdoor Temperature", "Outdoor Humidity", "Internal Temperature", "Tank 1 Pressure Psi", "Tank 1 Water Level", "Tank 2 Pressure Psi", "Tank 2 Water Level"] },
 		{ id: 'daff-power-' + safeId,   title: "Power",   fields: ["Panel Voltage", "Panel Current", "Battery Voltage", "Battery Current", "V50 Voltage", "Led Brightness", "Operating Status", "Async Data", "Wake Time Sec", "Sleep Time", "Estimated Runtime"] },
-		{ id: 'daff-comms-' + safeId,   title: "Comms",   fields: ["rssi", "snr", "Digital Stables Upload", "Lora Active", "ds Last Upload"] },
+		{ id: 'daff-comms-' + safeId,   title: "Comms",   fields: ["rssi", "snr", "Digital Stables Upload", "Lora Active", "Relay Status", "ds Last Upload"] },
 		{ id: 'daff-diag-' + safeId,    title: "Diagnostics", fields: ["RTC Battery Volt", "Op Mode", "Weather Fresh", "INA219 Found", "BH1750 Found", "ADS1115 Found", "RTC Found", "DS18B20 Found", "SHT Found", "Invalid Time", "Using Solar Power", "Source Original Time", "Local Time"] }
 	];
 	for (var ci = 0; ci < cardGroups.length; ci++) {
@@ -536,6 +536,11 @@ function buildDaffodilContent(telepathon) {
 			if (fieldName === "Light Level" && displayUnits && displayUnits.toLowerCase() === 'meter') {
 				displayUnits = 'Lux';
 			}
+			// Flow total arrives in millilitres; show litres (2026-11-16)
+			if ((fieldName === "Total Millilitres" || fieldName === "Total Millilitres 2") && !isNaN(parseFloat(r.value))) {
+				displayVal = Math.round(parseFloat(r.value) / 1000);
+				displayUnits = 'L';
+			}
 			var fieldLabel = fieldName;
 			if (fieldName === "Op Mode") {
 				// opMode bit0 = USB programming jumper (see the banner above the tabs)
@@ -546,6 +551,23 @@ function buildDaffodilContent(telepathon) {
 			var valCell = '<strong>' + displayVal + (displayUnits ? ' ' + displayUnits : '') + '</strong>';
 			var btnCell = noGraphFields[fieldName] ? '' : '<td style="text-align:right;white-space:nowrap;padding:2px 4px;">' + mkGraphBtns(tpName, r.deneName, fieldName) + '</td>';
 			html += '<tr><td style="width:40%;">' + fieldLabel + '</td><td>' + valCell + '</td>' + btnCell + '</tr>';
+			// After Measured Height (sensor-to-water distance), the water level it means: depth = Maximum
+			// Height (sensor to bottom) - Measured Height, and % of the Level Setup Full Depth - same maths as
+			// the summary card and the device's own page (2026-11-16). No graph buttons: it's computed here.
+			// Annabelles with the 2026-11-17 deserializer store Trough Level/Depth as words (listed
+			// above, with graph buttons), so the computed row is only for the ones without them.
+			if (fieldName === "Measured Height" && !getVal(purposeDene, "Trough Depth")) {
+				var mhNum = parseFloat(r.value);
+				var maxHR = getVal(sensorsDene, "Maximum Height"), fullR = getVal(sensorsDene, "Full Depth");
+				var maxHNum = maxHR ? parseFloat(maxHR.value) : NaN, fullNum = fullR ? parseFloat(fullR.value) : NaN;
+				if (!isNaN(mhNum) && mhNum > 0 && !isNaN(maxHNum) && maxHNum > 0) {
+					var depthNum = Math.max(0, maxHNum - mhNum);
+					var levelTxt = (!isNaN(fullNum) && fullNum > 0)
+						? Math.round(depthNum / fullNum * 100) + '% (' + Math.round(depthNum) + ' cm deep)'
+						: Math.round(depthNum) + ' cm deep';
+					html += '<tr><td style="width:40%;">Level</td><td><strong>' + levelTxt + '</strong></td><td></td></tr>';
+				}
+			}
 			if (card.title === "Power" && fieldName === "Battery Current") {
 				var socVal = DeviceViewsHost.setting(tpName, DENEWORD_PULSE_TASK_BATTERY_SOC_LIVE);
 				if (socVal !== null) {

@@ -89,7 +89,8 @@ function deviceViewsNoGpsBanner(telepathon) {
 
 // ---- Relay (2026-11-13, Ari): the device's own relay mode is on - it resends other devices' packets ----
 // Reported by the device itself (LangleyData.relayStatus -> Purpose "Relay Status"), so any Valentino-based
-// device gets it: Langley now, Gloria next. Not worked out from other devices' Routes - that is how packets
+// device gets it: Langley now, Gloria next. Daffodils too since 2026-11-17 (DigitalStablesData.relayStatus,
+// Annabelle token 59 -> the same Purpose "Relay Status"), e.g. Pool on mains. Not worked out from other devices' Routes - that is how packets
 // arrived, not what the device is doing.
 function deviceViewsIsRelay(telepathon) {
 	var on = false;
