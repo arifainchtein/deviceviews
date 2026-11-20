@@ -35,11 +35,31 @@
 //   });
 //   tabs.refresh();   // new telepathons: redraw the values
 //   tabs.setTabs(t);  // the tabs changed elsewhere
+//
+// Water networks (2026-11-20, deviceviews-waternetwork.js; load it before this file): a pill per network after the
+// tabs, and "+ Water network" after "+ New tab". Pass
+//     waterNetworks: [{id, name, chain}],              // chain: the stored "Water Network <name>" DeneChain
+//     waterNetwork: {teleonomeName, chainPrefix, canCreate, needsCode,
+//                    save: function(chain, oldChainName, code) { return Promise },
+//                    remove: function(chainName, code) { return Promise }}
+//   tabs.setWaterNetworks(list);   // the stored networks changed (one being edited is kept as it is)
 
 var DeviceViewsTabs = (function() {
 
 	var DAYS = typeof DeviceViewsWeather !== 'undefined' ? DeviceViewsWeather.DAYS : ["today", "tomorrow", "the day after", "in 3 days", "in 4 days"];
 	var WEATHER_PILL = 'weather';
+	var WN_NEW = 'wn-new';
+	function hasWaterNetworks() { return typeof DeviceViewsWaterNetwork !== 'undefined'; }
+	var DROP_PATH = 'M12 2.5c-3.6 4.6-6.5 8.4-6.5 11.8a6.5 6.5 0 0 0 13 0C18.5 10.9 15.6 7.1 12 2.5z';
+	function droplet() {
+		var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+		svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '13'); svg.setAttribute('height', '13');
+		svg.setAttribute('aria-hidden', 'true'); svg.style.marginRight = '5px'; svg.style.verticalAlign = '-1px';
+		var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+		p.setAttribute('d', DROP_PATH); p.setAttribute('fill', 'currentColor');
+		svg.appendChild(p);
+		return svg;
+	}
 	var LEVEL_HEX = {Red: '#e74c3c', Green: '#27ae60', Blue: '#2060ff', Gray: '#95a5a6'};
 	// Soft bands for a tile's heading when one of its alerts holds; dark text, so they read in a dark theme too.
 	var ALERT_COLORS = {
@@ -224,6 +244,44 @@ var DeviceViewsTabs = (function() {
 		var active = null;
 		var editing = null;   // the tab being made or changed: {id, name, items}
 		var codeAsked = false;   // the host said no code was needed, but the save asked for one after all
+		var networks = o.waterNetworks || [];
+		var wno = o.waterNetwork || null;
+		var wnInstances = {};   // pill id -> DeviceViewsWaterNetwork, kept so an edit survives the page refreshing
+		var wnShowing = null;   // the pill id whose network is drawn in o.view now
+		var wnNewName = null;
+		function wnOn() { return hasWaterNetworks() && !!wno; }
+		function networkById(id) {
+			for (var i = 0; i < networks.length; i++) if (String(networks[i].id) === String(id)) return networks[i];
+			return null;
+		}
+		function wnInstance(pillId) {
+			if (wnInstances[pillId]) return wnInstances[pillId];
+			var n = pillId === WN_NEW ? null : networkById(pillId.substring(3));
+			if (pillId !== WN_NEW && !n) return null;
+			wnInstances[pillId] = DeviceViewsWaterNetwork.create({
+				view: o.view, teleonomeName: wno.teleonomeName, chain: n ? n.chain : null, name: n ? n.name : wnNewName,
+				chainPrefix: wno.chainPrefix, telepathons: telepathons, canEdit: !!o.canEdit, needsCode: wno.needsCode !== false,
+				save: function(chain, oldName, code) {
+					return wno.save(chain, oldName, code).then(function(r) {
+						// the network now lives under its chain's name: move the instance to that pill
+						var id = chain.Name, inst = wnInstances[pillId];
+						delete wnInstances[pillId];
+						wnInstances['wn-' + id] = inst;
+						networks = networks.filter(function(x) { return x.id !== id && (oldName === null || x.id !== oldName); })
+							.concat([{id: id, name: inst.name(), chain: chain}]);
+						active = 'wn-' + id; wnShowing = active; remember(); drawPills();
+						return r;
+					});
+				},
+				remove: function(chainName, code) { return wno.remove(chainName, code); },
+				removed: function() {
+					delete wnInstances[pillId];
+					if (pillId !== WN_NEW) networks = networks.filter(function(x) { return 'wn-' + x.id !== pillId; });
+					active = null; wnShowing = null; remember(); draw();
+				}
+			});
+			return wnInstances[pillId];
+		}
 
 		try { active = localStorage.getItem(o.storageKey) || null; } catch (e) {}
 
@@ -245,7 +303,9 @@ var DeviceViewsTabs = (function() {
 		// The pill to show: the one chosen before when it is still there, else the first.
 		function settle() {
 			var ids = availableBuiltIns().map(function(b) { return b.id; }).concat(hasWeather() ? [WEATHER_PILL] : [])
-				.concat(tabs.map(function(t) { return 'tab-' + t.id; }));
+				.concat(tabs.map(function(t) { return 'tab-' + t.id; }))
+				.concat(wnOn() ? networks.map(function(n) { return 'wn-' + n.id; }) : [])
+				.concat(wnOn() && wnInstances[WN_NEW] ? [WN_NEW] : []);
 			if (active === 'new' && o.canEdit) return;
 			if (ids.indexOf(active) < 0) active = ids.length ? ids[0] : null;
 		}
@@ -255,9 +315,12 @@ var DeviceViewsTabs = (function() {
 			o.pills.classList.add('dvt-pills');
 			var all = availableBuiltIns().map(function(b) { return {id: b.id, name: b.name}; })
 				.concat(hasWeather() ? [{id: WEATHER_PILL, name: 'Weather'}] : [])
-				.concat(tabs.map(function(t) { return {id: 'tab-' + t.id, name: t.name}; }));
+				.concat(tabs.map(function(t) { return {id: 'tab-' + t.id, name: t.name}; }))
+				.concat(wnOn() ? networks.map(function(n) { return {id: 'wn-' + n.id, name: n.name, water: true}; }) : [])
+				.concat(wnOn() && wnInstances[WN_NEW] ? [{id: WN_NEW, name: wnInstances[WN_NEW].name(), water: true}] : []);
 			all.forEach(function(p) {
 				var b = el('button', 'dvt-pill' + (p.id === active && !editing ? ' dvt-on' : ''), p.name);
+				if (p.water) b.insertBefore(droplet(), b.firstChild);
 				b.type = 'button';
 				b.setAttribute('aria-pressed', String(p.id === active && !editing));
 				b.addEventListener('click', function() { editing = null; active = p.id; remember(); draw(); });
@@ -268,6 +331,19 @@ var DeviceViewsTabs = (function() {
 				add.type = 'button';
 				add.addEventListener('click', function() { openEditor(null); });
 				o.pills.appendChild(add);
+			}
+			if (o.canEdit && wnOn() && wno.canCreate !== false && !wnInstances[WN_NEW]) {
+				var addw = el('button', 'dvt-pill dvt-new', '+ Water network');
+				addw.type = 'button';
+				addw.addEventListener('click', function() {
+					var n = window.prompt('Name of the new water network (e.g. Farm water)', '');
+					n = String(n || '').replace(/[:@#]/g, '').replace(/\s+/g, ' ').trim();
+					if (!n) return;
+					if (networks.some(function(x) { return x.name === n; })) { window.alert('There is already a water network called ' + n + '.'); return; }
+					wnNewName = n; editing = null; active = WN_NEW;
+					draw();
+				});
+				o.pills.appendChild(addw);
 			}
 			// nothing to choose between: no pills
 			o.pills.hidden = all.length + (o.canEdit ? 1 : 0) < 2 && !tabs.length;
@@ -281,8 +357,11 @@ var DeviceViewsTabs = (function() {
 			o.editor.hidden = !editing;
 			var tab = !editing && active && active.indexOf('tab-') === 0 ? tabById(active.substring(4)) : null;
 			var weather = !editing && active === WEATHER_PILL && hasWeather();
-			o.view.hidden = !tab && !weather;
+			var wn = !editing && wnOn() && active && active.indexOf('wn-') === 0 ? wnInstance(active) : null;
+			o.view.hidden = !tab && !weather && !wn;
+			if (!wn) wnShowing = null;
 			if (editing) drawEditor();
+			else if (wn) { if (wnShowing !== active) { wnShowing = active; wn.render(); } else wn.refresh(); }
 			else if (weather) DeviceViewsWeather.render(o.view, telepathons());
 			else if (tab) drawTab(tab);
 			else availableBuiltIns().forEach(function(b) { if (b.id === active) b.show(); });
@@ -748,6 +827,15 @@ var DeviceViewsTabs = (function() {
 			// new telepathons: redraw what is showing (not the editor, so nothing typed is lost)
 			refresh: function() { if (!editing) draw(); else drawPills(); },
 			setTabs: function(t) { tabs = t || []; if (!editing) draw(); },
+			setWaterNetworks: function(list) {
+				networks = list || [];
+				networks.forEach(function(n) { var inst = wnInstances['wn-' + n.id]; if (inst) inst.setChain(n.chain); });
+				Object.keys(wnInstances).forEach(function(id) {
+					if (id !== WN_NEW && !networkById(id.substring(3)) && !wnInstances[id].isEditing()) { delete wnInstances[id]; if (wnShowing === id) wnShowing = null; }
+				});
+				if (wnShowing) { var inst = wnInstances[wnShowing]; if (inst && !inst.isEditing()) { wnShowing = null; } }
+				if (!editing) draw(); else drawPills();
+			},
 			// the host's own views changed (e.g. the map was switched off)
 			redraw: draw
 		};
