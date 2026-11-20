@@ -552,6 +552,21 @@ var DeviceViewsWaterNetwork = (function() {
 			}
 			return total;
 		}
+		// litres into a tank through metered pipes and out of it through its meters between t0 and t1
+		// (history of the given period; the last hour when none is given)
+		function meteredInOut(name, t0, t1, range) {
+			var inL = 0, outL = 0, missing = false;
+			st.conns.forEach(function(c) {
+				if (c[1] === name && isMeter(c[0])) { var d = wantHistory(c[0], range); if (!d) missing = true; inL += litres(d, t0, t1); }
+				if (nodeOf(c[0]) === name && isMeter(c[0]) && meterRoleOf(c[0]) !== 'measuring') { var d2 = wantHistory(c[0], range); if (!d2) missing = true; outL += litres(d2, t0, t1); }
+			});
+			// the outflow meters of the tank itself count even when no pipe is laid yet
+			metersOf(name).forEach(function(m) {
+				var mk = name + ':' + m;
+				if (meterRoleOf(mk) === 'outflow' && !st.conns.some(function(c) { return c[0] === mk; })) { var d3 = wantHistory(mk, range); if (!d3) missing = true; outL += litres(d3, t0, t1); }
+			});
+			return {inL: inL, outL: outL, missing: missing};
+		}
 		// unmetered water into a tank over the last hour: rise × area + pumped out − pumped in − overflow
 		function tankBalance(name) {
 			var t = tel(name);
@@ -569,16 +584,7 @@ var DeviceViewsWaterNetwork = (function() {
 			var h1 = avg(first.map(function(r) { return mm(r.v); })), h2 = avg(last.map(function(r) { return mm(r.v); }));
 			var v1 = avg(first.map(function(r) { return vol(r.v); })), v2 = avg(last.map(function(r) { return vol(r.v); }));
 			var t0 = avg(first.map(function(r) { return r.t; })), t1 = avg(last.map(function(r) { return r.t; }));
-			var inL = 0, outL = 0, missing = false;
-			st.conns.forEach(function(c) {
-				if (c[1] === name && isMeter(c[0])) { var d = wantHistory(c[0]); if (!d) missing = true; inL += litres(d, t0, t1); }
-				if (nodeOf(c[0]) === name && isMeter(c[0]) && meterRoleOf(c[0]) !== 'measuring') { var d2 = wantHistory(c[0]); if (!d2) missing = true; outL += litres(d2, t0, t1); }
-			});
-			// the outflow meters of the tank itself count even when no pipe is laid yet
-			metersOf(name).forEach(function(m) {
-				var mk = name + ':' + m;
-				if (meterRoleOf(mk) === 'outflow' && !st.conns.some(function(c) { return c[0] === mk; })) { var d3 = wantHistory(mk); if (!d3) missing = true; outL += litres(d3, t0, t1); }
-			});
+			var io = meteredInOut(name, t0, t1), inL = io.inL, outL = io.outL, missing = io.missing;
 			var minutes = (t1 - t0) / 60000, rise = h2 - h1, riseL = v2 - v1, unmetered = riseL + outL - inL;
 			var step = units === '%' ? (t.fullHeight || 0) / 100 : units === 'cm' ? 10 : 1;
 			return {minutes: minutes, rise: rise, riseL: riseL, byCapacity: byCapacity, inL: inL, outL: outL, unmetered: unmetered, perMinute: minutes > 0 ? unmetered / minutes : 0,
@@ -807,6 +813,7 @@ var DeviceViewsWaterNetwork = (function() {
 				nb.appendChild(parts.nameShown);
 				nb.appendChild(el('span', 'muted', '  zoom in until the chart shows only the run you want to name'));
 				cc.appendChild(nb);
+				parts.nameBar = nb;
 			}
 			root.appendChild(cc);
 			chartEvents();
@@ -1385,17 +1392,28 @@ var DeviceViewsWaterNetwork = (function() {
 		function chartMeters() {
 			var list = [];
 			allTelepathonNames().forEach(function(n) { if (roleOf(n) !== 'none') metersOf(n).forEach(function(m) { list.push(n + ':' + m); }); });
+			// and every tank whose level word is chosen (Pool's Trough Level): to see it fill by rain or seepage
+			allTelepathonNames().forEach(function(n) { var t = tel(n); if (t && t.tank && t.level) list.push(LEVEL_KEY + n); });
 			return list;
+		}
+		var LEVEL_KEY = 'level|';
+		function isLevelKey(k) { return !!k && k.indexOf(LEVEL_KEY) === 0; }
+		function chartLabel(k) {
+			if (!isLevelKey(k)) return epLabel(k);
+			var n = k.slice(LEVEL_KEY.length), t = tel(n);
+			return n + ' · level (' + t.level + ')';
 		}
 		function drawChart() {
 			var svg = parts.chart, ms = chartMeters();
 			svg.textContent = '';
 			parts.chartMeter.textContent = '';
-			ms.forEach(function(k) { var op = el('option', null, epLabel(k)); op.value = k; parts.chartMeter.appendChild(op); });
-			if (ms.indexOf(chartKey) < 0) chartKey = ms.filter(function(k) { return st.sinks.some(function(s) { return s.meter === k; }); })[0] || ms[0] || null;
+			ms.forEach(function(k) { var op = el('option', null, chartLabel(k)); op.value = k; parts.chartMeter.appendChild(op); });
+			if (ms.indexOf(chartKey) < 0) chartKey = ms.filter(function(k) { return st.sinks.some(function(s) { return s.meter === k; }); })[0] || ms.filter(function(k) { return !isLevelKey(k); })[0] || ms[0] || null;
 			parts.legend.textContent = '';
+			if (parts.nameBar) parts.nameBar.hidden = isLevelKey(chartKey);
 			if (!chartKey) { S('text', {x: CH.l, y: 40}, svg, 'Put a telepathon with a flow meter in the network to chart it.'); return; }
 			parts.chartMeter.value = chartKey;
+			if (isLevelKey(chartKey)) return drawLevelChart(svg, chartKey.slice(LEVEL_KEY.length));
 			var data = wantHistory(chartKey, chartRange), up = upstreamMeter(chartKey), upData = up ? wantHistory(up, chartRange) : null;
 			var t1 = chartView ? chartView.t1 : Date.now(), t0 = chartView ? chartView.t0 : t1 - chartRange;
 			parts.zoomBar.hidden = !chartView;
@@ -1448,6 +1466,82 @@ var DeviceViewsWaterNetwork = (function() {
 			sk.forEach(function(s) { li(s.color, s.name + ' (' + s.min + '–' + s.max + ')'); });
 			st.sinks.filter(function(s) { return s.meter === chartKey && sk.indexOf(s) < 0; }).forEach(function(s) { li(s.color, s.name + ' (' + s.min + '–' + s.max + ', not connected here)', true); });
 			li('#c0392b', 'unexplained');
+		}
+		// a tank's level over the period (e.g. Pool filling by seepage after rain), with what it gained in what is
+		// shown and how much of that came in without a meter: gained + metered out − metered in
+		function drawLevelChart(svg, name) {
+			var t = tel(name), word = t.level;
+			var units = t.levelUnits || unitsOf(wordNamed(purpose(name), word)) || unitsOf({Name: word}) || '';
+			var data = wantHistory(name + ':' + word, chartRange);
+			var t1 = chartView ? chartView.t1 : Date.now(), t0 = chartView ? chartView.t0 : t1 - chartRange;
+			parts.zoomBar.hidden = !chartView;
+			function mm(v) { return units === '%' ? (t.fullHeight ? v / 100 * t.fullHeight : null) : units === 'cm' ? v * 10 : v; }
+			var byCapacity = units === '%' && t.capacity > 0;
+			function vol(v) { if (byCapacity) return v / 100 * t.capacity; var d = mm(v); return d !== null && t.area ? d * t.area : null; }
+			// the readings that show: those inside, and the one before it (it holds until the next)
+			var shown = [], before = null;
+			(data || []).forEach(function(r) { if (r.t < t0) before = r; else if (r.t <= t1) shown.push(r); });
+			var vis = (before ? [before] : []).concat(shown);
+			var lo = Infinity, hi = -Infinity;
+			vis.forEach(function(r) { if (r.v < lo) lo = r.v; if (r.v > hi) hi = r.v; });
+			if (!vis.length) { lo = 0; hi = units === '%' ? 100 : 10; }
+			var pad = Math.max(1, (hi - lo) * 0.15);
+			lo = lo - pad; hi = hi + pad;
+			if (units === '%') { lo = Math.max(0, lo); hi = Math.min(100, hi); }
+			// gridlines on round steps (1, 2, 5, 10 …), at most 6 of them
+			var stepG = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500].filter(function(s) { return (hi - lo) / s <= 6; })[0] || 1000;
+			lo = Math.floor(lo / stepG) * stepG; hi = Math.ceil(hi / stepG) * stepG;
+			if (hi <= lo) hi = lo + stepG;
+			function x(tt) { return CH.l + (tt - t0) / (t1 - t0) * (CH.W - CH.l - CH.r); }
+			function y(v) { return CH.t + (1 - (v - lo) / (hi - lo)) * (CH.H - CH.t - CH.b); }
+			parts.x = x; parts.t0 = t0; parts.t1 = t1;
+			function L(v) { return Math.round(v).toLocaleString() + ' L'; }
+			var dec = stepG < 1 ? 1 : 0;
+			for (var v = lo; v <= hi + stepG / 2; v += stepG) {
+				S('line', {x1: CH.l, x2: CH.W - CH.r, y1: y(v), y2: y(v), 'class': 'ax'}, svg);
+				S('text', {x: CH.l - 6, y: y(v) + 4, 'text-anchor': 'end'}, svg, v.toFixed(dec));
+				var lv = vol(v);
+				if (lv !== null && v > lo && v < hi - stepG / 2) S('text', {x: CH.W - CH.r - 4, y: y(v) - 3, 'text-anchor': 'end'}, svg, L(lv));
+			}
+			var span = t1 - t0, days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+			for (var m = 0; m <= 6; m++) {
+				var tt = t0 + span * m / 6, dd = new Date(tt);
+				S('text', {x: x(tt), y: CH.H - 10, 'text-anchor': 'middle'}, svg, span > 20 * 3600000 ? days[dd.getDay()] + ' ' + hhmm(tt) : span < 900000 ? hhmm(tt) + ':' + two(dd.getSeconds()) : hhmm(tt));
+			}
+			S('text', {x: CH.l, y: CH.t - 1}, svg, units);
+			// the level as steps: each reading holds until the next
+			var d = '';
+			vis.forEach(function(r, i) {
+				var nt = Math.min(t1, i + 1 < vis.length ? vis[i + 1].t : t1);
+				d += (d ? 'L' : 'M') + x(Math.max(t0, r.t)).toFixed(1) + ' ' + y(r.v).toFixed(1) + 'L' + x(nt).toFixed(1) + ' ' + y(r.v).toFixed(1);
+			});
+			if (d) S('path', {d: d, 'class': 'ln'}, svg);
+			if (shown.length && shown.length <= 150) shown.forEach(function(r) { S('circle', {cx: x(r.t), cy: y(r.v), r: 3, fill: '#2a7fd4'}, svg); });
+			if (!data) S('text', {x: CH.l + 10, y: 40}, svg, 'Reading the history…');
+			else if (!vis.length) S('text', {x: CH.l + 10, y: 40}, svg, 'No level readings in this period.');
+			if (drag) S('rect', {x: Math.min(drag.a, drag.b), y: CH.t, width: Math.abs(drag.b - drag.a), height: CH.H - CH.t - CH.b, 'class': 'selr'}, svg);
+			function li(col, txt) { var s = el('span'), sw = el('span', 'sw'); if (col) sw.style.background = col; else sw.style.visibility = 'hidden'; s.appendChild(sw); s.appendChild(document.createTextNode(txt)); parts.legend.appendChild(s); }
+			var now = vis.length ? vis[vis.length - 1].v : null;
+			li('#2a7fd4', name + ' ' + word + (now !== null ? ': ' + now + ' ' + units + (vol(now) !== null ? ' ≈ ' + L(vol(now)) : '') : ''));
+			// what it gained in what is shown: a few readings averaged at each end (the level reads in steps)
+			if (shown.length < 2) { S('text', {x: CH.W - CH.r, y: CH.t + 10, 'text-anchor': 'end'}, svg, chartView ? shown.length + ' readings' : ''); return; }
+			var k = Math.max(1, Math.min(3, Math.floor(shown.length / 3))), first = shown.slice(0, k), last = shown.slice(-k);
+			var ta = avg(first.map(function(r) { return r.t; })), tb = avg(last.map(function(r) { return r.t; }));
+			var va = avg(first.map(function(r) { return r.v; })), vb = avg(last.map(function(r) { return r.v; }));
+			var hours = (tb - ta) / 3600000, rise = vb - va;
+			var riseMm = mm(vb) !== null ? mm(vb) - mm(va) : null, riseL = vol(vb) !== null ? vol(vb) - vol(va) : null;
+			var head = (rise >= 0 ? '+' : '') + rise.toFixed(units === '%' ? 1 : 0) + ' ' + units + (riseMm !== null && units !== 'mm' ? ' = ' + (riseMm >= 0 ? '+' : '') + riseMm.toFixed(0) + ' mm' : '') + (riseL !== null ? ' ≈ ' + (riseL >= 0 ? '+' : '') + L(riseL) : '');
+			S('text', {x: CH.W - CH.r, y: CH.t + 10, 'text-anchor': 'end'}, svg, (chartView ? new Date(t0).toLocaleDateString() + ' ' + hhmm(t0) + ' – ' + hhmm(t1) + ' · ' + shown.length + ' readings · ' : '') + head);
+			li(null, 'From ' + stamp(ta) + ' to ' + stamp(tb) + ' (' + hours.toFixed(1) + ' h): ' + head);
+			if (riseL === null) { li(null, 'Give ' + name + ' its capacity (or surface area' + (units === '%' ? ' and height when full' : '') + ') in Edit network to see it in litres.'); return; }
+			var io = meteredInOut(name, ta, tb, chartRange), unmetered = riseL + io.outL - io.inL;
+			var res = byCapacity ? t.capacity / 100 : (units === '%' ? (t.fullHeight || 0) / 100 : units === 'cm' ? 10 : 1) * (t.area || 0);
+			li(null, 'Meters: ' + L(io.outL) + ' out, ' + L(io.inL) + ' in' + (io.missing ? ' (some meter history still coming)' : ''));
+			li(Math.abs(unmetered) <= res ? '#5f6b64' : unmetered > 0 ? '#16a085' : '#c0392b',
+				'Without a meter: ' + (unmetered >= 0 ? '+' : '') + L(unmetered) + (hours > 0 ? ' ≈ ' + (unmetered >= 0 ? '+' : '') + L(unmetered / hours) + '/h' : '')
+				+ (t.rainArea && unmetered > 0 ? ' (as rain on ' + t.rainArea + ' m²: ' + (unmetered / t.rainArea).toFixed(1) + ' mm)' : '')
+				+ (unmetered > res ? ' — rain, seepage or a stream' : unmetered < -res ? ' — a leak or an overflow' : '')
+				+ ' · the level reads in steps of ' + L(res));
 		}
 		function zoomBy(factor) {
 			if (!chartView) return;
