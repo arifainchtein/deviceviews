@@ -40,6 +40,8 @@
 // tabs, and "+ Water network" after "+ New tab". Pass
 //     waterNetworks: [{id, name, chain}],              // chain: the stored "Water Network <name>" DeneChain
 //     waterNetwork: {teleonomeName, chainPrefix, canCreate, needsCode,
+//                    canEdit,                         // false: shown read-only (devices.digitalstables.com)
+//                    note, sync,                      // passed to each network (deviceviews-waternetwork.js)
 //                    save: function(chain, oldChainName, code) { return Promise },
 //                    remove: function(chainName, code) { return Promise }}
 //   tabs.setWaterNetworks(list);   // the stored networks changed (one being edited is kept as it is)
@@ -260,7 +262,8 @@ var DeviceViewsTabs = (function() {
 			if (pillId !== WN_NEW && !n) return null;
 			wnInstances[pillId] = DeviceViewsWaterNetwork.create({
 				view: o.view, teleonomeName: wno.teleonomeName, chain: n ? n.chain : null, name: n ? n.name : wnNewName,
-				chainPrefix: wno.chainPrefix, telepathons: telepathons, canEdit: !!o.canEdit, needsCode: wno.needsCode !== false,
+				chainPrefix: wno.chainPrefix, telepathons: telepathons, canEdit: !!o.canEdit && wno.canEdit !== false, needsCode: wno.needsCode !== false,
+				note: n && n.note ? n.note : wno.note, sync: wno.sync,
 				save: function(chain, oldName, code) {
 					return wno.save(chain, oldName, code).then(function(r) {
 						// the network now lives under its chain's name: move the instance to that pill
@@ -332,7 +335,7 @@ var DeviceViewsTabs = (function() {
 				add.addEventListener('click', function() { openEditor(null); });
 				o.pills.appendChild(add);
 			}
-			if (o.canEdit && wnOn() && wno.canCreate !== false && !wnInstances[WN_NEW]) {
+			if (o.canEdit && wnOn() && wno.canEdit !== false && wno.canCreate !== false && !wnInstances[WN_NEW]) {
 				var addw = el('button', 'dvt-pill dvt-new', '+ Water network');
 				addw.type = 'button';
 				addw.addEventListener('click', function() {

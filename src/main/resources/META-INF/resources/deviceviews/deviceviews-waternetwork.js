@@ -14,9 +14,11 @@
 //   "Water Network Settings"   Network Name, Balance Tolerance, Minimum Flow, Alert After Seconds, Active
 //   "Water Source" / "Water Measuring Point"   one per telepathon in the network (dene name = telepathon name):
 //       Source Kind (Telepathon | Tank | Unmetered), Telepathon Pointer, Meter <n> Pointer / Role / Name,
-//       tanks: Shape, Level Pointer, Level Units (% | mm | cm), Surface Area (m2), Height When Full (mm),
+//       tanks: Shape, Level Pointer, Level Units (% | mm | cm), Capacity (L, when full), Surface Area (m2), Height When Full (mm),
 //       Overflow Height (mm), Overflow Lip Width (m), Rain Catchment Area (m2), Rain Falls On Surface
 //       unmetered: What It Is
+//       a tank without a sensor (2026-11-20, TopTank before its Daffodil): Source Kind Tank, Has Sensor false, no
+//       Telepathon Pointer; a telepathon of the same name later is used as its sensor (or link one in its sheet)
 //   "Water Defined Sink"       Learned On Pointer, Minimum Flow, Maximum Flow, Learned From, Learned To
 //   "Water Connection"         From, To (pointers), From Port "Overflow" for a tank's overflow outlet
 // Pointers: a meter is @<Teleonome>:Telepathons:<telepathon>:Purpose:<word>, anything else is the element's own
@@ -34,7 +36,10 @@
 //     canEdit: true, needsCode: true,
 //     save: function(chain, oldChainName, code) { return Promise },   // oldChainName null: a new network
 //     remove: function(chainName, code) { return Promise },
-//     removed: function() {}             // after a remove went through
+//     removed: function() {},            // after a remove went through
+//     note: "...",                       // optional: a line under the name (devices.digitalstables.com: where to change it)
+//     sync: {label, status: function() { return Promise(text) }, send: function() { return Promise(text) }}
+//                                        // optional: a button next to Edit (the Teleonome: "Update Digital Stables")
 //   });
 //   wn.render();          // draw into view (again)
 //   wn.setChain(chain);   // the stored network changed (ignored while editing)
@@ -171,6 +176,7 @@ var DeviceViewsWaterNetwork = (function() {
 				st.unmetered.push({name: d.Name, what: wordValue(d, 'What It Is') || 'stream / groundwater'});
 			} else if (type === 'Water Source' || type === 'Water Measuring Point') {
 				var kind = wordValue(d, 'Source Kind'), t2 = {role: type === 'Water Source' ? 'source' : 'measuring', tank: kind === 'Tank'};
+				if (wordValue(d, 'Has Sensor') === false || (kind === 'Tank' && wordValue(d, 'Telepathon Pointer') === undefined)) t2.sensorless = true;
 				for (var n = 1; n < 20; n++) {
 					var mp = wordValue(d, 'Meter ' + n + ' Pointer');
 					if (mp === undefined) break;
@@ -188,6 +194,9 @@ var DeviceViewsWaterNetwork = (function() {
 					t2.shape = wordValue(d, 'Shape') === 'Cone' ? 'cone' : null;
 					t2.area = num(wordValue(d, 'Surface Area')) || 0;
 					t2.fullHeight = num(wordValue(d, 'Height When Full')) || 0;
+					t2.capacity = num(wordValue(d, 'Capacity')) || 0;
+					var kv = num(wordValue(d, 'Known Volume')), ka = parseTime(wordValue(d, 'Known Volume At') || '');
+					if (kv !== null && ka !== null) { t2.knownVolume = kv; t2.knownAt = ka; }
 					t2.overflowHeight = num(wordValue(d, 'Overflow Height')) || 0;
 					t2.overflowWidth = num(wordValue(d, 'Overflow Lip Width')) || 0;
 					t2.rainArea = num(wordValue(d, 'Rain Catchment Area')) || 0;
@@ -226,7 +235,8 @@ var DeviceViewsWaterNetwork = (function() {
 			if (t.role === 'none') return;
 			var ws = [];
 			if (t.role === 'source') ws.push(W("Source Kind", t.tank ? "Tank" : "Telepathon", "String"));
-			ws.push(W("Telepathon Pointer", T + ":Telepathons:" + name, "Dene Pointer"));
+			if (t.sensorless) ws.push(W("Has Sensor", false, "boolean"));
+			else ws.push(W("Telepathon Pointer", T + ":Telepathons:" + name, "Dene Pointer"));
 			(liveMeters(name) || []).forEach(function(m, ix) {
 				var k = name + ':' + m;
 				ws.push(W("Meter " + (ix + 1) + " Pointer", ptr(k), "Dene Pointer", "Water Meter Pointer"));
@@ -237,6 +247,8 @@ var DeviceViewsWaterNetwork = (function() {
 				if (t.shape === 'cone') ws.push(W("Shape", "Cone", "String"));
 				if (t.level) { ws.push(W("Level Pointer", T + ":Telepathons:" + name + ":Purpose:" + t.level, "Dene Pointer")); if (t.levelUnits) ws.push(W("Level Units", t.levelUnits, "String")); }
 				if (t.area) ws.push(W("Surface Area", t.area, "double", null, "m2"));
+				if (t.capacity) ws.push(W("Capacity", t.capacity, "double", null, "L"));
+				if (t.knownVolume != null && t.knownAt) { ws.push(W("Known Volume", t.knownVolume, "double", null, "L")); ws.push(W("Known Volume At", stamp(t.knownAt), "String")); }
 				if (t.fullHeight) ws.push(W("Height When Full", t.fullHeight, "double", null, "mm"));
 				if (t.overflowHeight) { ws.push(W("Overflow Height", t.overflowHeight, "double", null, "mm")); ws.push(W("Overflow Lip Width", t.overflowWidth || 0, "double", null, "m")); }
 				if (t.rainArea) { ws.push(W("Rain Catchment Area", t.rainArea, "double", null, "m2")); ws.push(W("Rain Falls On Surface", !!t.rainOnSurface, "boolean")); }
@@ -280,16 +292,27 @@ var DeviceViewsWaterNetwork = (function() {
 		function liveList() { return (o.telepathons() || []).filter(Boolean); }
 		function live(name) { return liveList().filter(function(t) { return t.Name === name; })[0] || null; }
 		function purpose(name) { return deneNamed(live(name), 'Purpose'); }
+		// A word's units: its own, or (live status packets can come without them) what its name says:
+		// "Trough Level" is how full in %, "Measured Height" is cm, "Flow Rate 1" is l/m (2026-11-20).
+		function unitsOf(w) {
+			if (w && w.Units) return w.Units;
+			var n = String((w && w.Name) || '');
+			if (/Flow Rate/i.test(n)) return 'l/m';
+			if (/Level$/i.test(n) && !/Light/i.test(n)) return '%';
+			if (/Measured Height$/i.test(n)) return 'cm';
+			return null;
+		}
 		// a telepathon's flow meters: its Purpose words in l/m (and any the network already names)
 		function metersOf(name) {
 			var list = [];
-			((purpose(name) || {}).DeneWords || []).forEach(function(w) { if (w.Units === 'l/m') list.push(w.Name); });
+			((purpose(name) || {}).DeneWords || []).forEach(function(w) { if (unitsOf(w) === 'l/m') list.push(w.Name); });
 			Object.keys(st.meterRole).forEach(function(k) { var p = k.split(':'); if (p[0] === name && list.indexOf(p[1]) < 0) list.push(p[1]); });
 			return list;
 		}
 		function levelWordsOf(name) {
-			return ((purpose(name) || {}).DeneWords || []).filter(function(w) { return w.Units === '%' || w.Units === 'cm' || w.Units === 'mm'; })
-				.map(function(w) { return {name: w.Name, units: w.Units}; });
+			return ((purpose(name) || {}).DeneWords || []).filter(function(w) { var u = unitsOf(w); return u === '%' || u === 'cm' || u === 'mm'; })
+				.map(function(w) { return {name: w.Name, units: unitsOf(w)}; })
+				.sort(function(a, b) { return (a.units === '%' ? 0 : 1) - (b.units === '%' ? 0 : 1); });   // how full first
 		}
 		function typeOf(name) {
 			var t = live(name), c = deneNamed(t, 'Configuration');
@@ -315,7 +338,7 @@ var DeviceViewsWaterNetwork = (function() {
 			if (!t || !t.tank || !t.level) return null;
 			var v = num(wordValue(purpose(name), t.level));
 			if (v === null) return null;
-			var u = t.levelUnits || ((wordNamed(purpose(name), t.level) || {}).Units);
+			var u = t.levelUnits || unitsOf(wordNamed(purpose(name), t.level));
 			if (u === '%') return t.fullHeight ? v / 100 * t.fullHeight : null;
 			return u === 'cm' ? v * 10 : v;
 		}
@@ -323,7 +346,7 @@ var DeviceViewsWaterNetwork = (function() {
 			var t = tel(name), d = depthMm(name);
 			if (d !== null && t.fullHeight) return d / t.fullHeight * 100;
 			var v = t && t.level ? num(wordValue(purpose(name), t.level)) : null;
-			return v !== null && (t.levelUnits || (wordNamed(purpose(name), t.level) || {}).Units) === '%' ? v : null;
+			return v !== null && (t.levelUnits || unitsOf(wordNamed(purpose(name), t.level))) === '%' ? v : null;
 		}
 		// water over the overflow lip, l/m (sharp-crested weir: 1.84 · width · head^1.5 m³/s)
 		function overflowNow(name) {
@@ -376,6 +399,8 @@ var DeviceViewsWaterNetwork = (function() {
 		function junction(k) {
 			var kids = children(k).filter(function(c) { return PORTS[c] && PORTS[c]['in']; });
 			if (!kids.length || !kids.every(isMeter) || !isMeter(k)) return null;
+			// a meter fed from somewhere else too (TopTank's outlet joining the pipe) is shared: no balance to check
+			if (kids.some(function(c) { return st.conns.filter(function(x) { return x[1] === c; }).length > 1; })) return null;
 			var times = [k].concat(kids).map(function(x) { return secondsOf(nodeOf(x)); });
 			if (times.some(function(t) { return t === null; })) return {apart: true, missing: true};
 			var spread = Math.max.apply(null, times) - Math.min.apply(null, times);
@@ -383,13 +408,118 @@ var DeviceViewsWaterNetwork = (function() {
 			var sum = kids.reduce(function(s, c) { return s + flowValue(c); }, 0), diff = outValue(k) - sum;
 			return {diff: diff, bad: Math.abs(diff) > st.settings.tolerance, sum: sum};
 		}
+		// The flow in every pipe at one moment (2026-11-20), from the meters' values then (meter(k) -> l/m):
+		//   an outlet with a known flow (a meter, a tank's overflow, a stream worked out from a level) gives first to
+		//   the meters it feeds, as much as they show (shared with any other known outlet feeding them); its defined
+		//   sinks are recognised in what is left; the rest goes to its other pipes (a tank it fills);
+		//   a meter that shows more than its known outlets gave is fed the rest by its other pipes (a tank's outlet:
+		//   TopTank draining into the pipe to PipeSplit).
+		// Within the balance tolerance counts as nothing, so meters read a few seconds apart do not make flows up.
+		// A tank on its own (no meter before or after) gets nothing. Returns one l/m per st.conns entry.
+		function solve(meter, known) {
+			var flows = st.conns.map(function() { return 0; }), tol = st.settings.tolerance;
+			function supplyOf(k) { return isMeter(k) ? meter(k) : known(k); }
+			function knownOutlet(k) { return isMeter(k) || isOverflow(k) || !!estNamed(k); }
+			var outs = {};
+			st.conns.forEach(function(c) { if (knownOutlet(c[0])) outs[c[0]] = true; });
+			Object.keys(outs).forEach(function(o) {
+				var supply = Math.max(0, supplyOf(o) || 0);
+				if (supply <= 0) return;
+				var meterKids = [], sinkKids = [], otherKids = [];
+				st.conns.forEach(function(c, ix) {
+					if (c[0] !== o) return;
+					if (isMeter(c[1])) meterKids.push(ix); else if (sinkNamed(c[1])) sinkKids.push(ix); else otherKids.push(ix);
+				});
+				var wanted = 0;
+				meterKids.forEach(function(ix) {
+					var b = st.conns[ix][1], others = st.conns.filter(function(x) { return x[1] === b && knownOutlet(x[0]); })
+						.reduce(function(sum, x) { return sum + Math.max(0, supplyOf(x[0]) || 0); }, 0);
+					flows[ix] = Math.max(0, meter(b) || 0) * (others > 0 ? supply / others : 1);
+					wanted += flows[ix];
+				});
+				if (wanted > supply) { meterKids.forEach(function(ix) { flows[ix] *= supply / wanted; }); wanted = supply; }
+				var rest = supply - wanted;
+				if (rest <= tol && meterKids.length) return;
+				if (sinkKids.length) {
+					var at = attribute(rest, sinkKids.map(function(ix) { return sinkNamed(st.conns[ix][1]); }));
+					sinkKids.forEach(function(ix) { var v = at.by[st.conns[ix][1]] || 0; flows[ix] = v; rest -= v; });
+					if (!otherKids.length) return;
+				}
+				if (rest > tol && otherKids.length) otherKids.forEach(function(ix) { flows[ix] = rest / otherKids.length; });
+			});
+			// meters that show more than their known outlets gave: the rest comes from the other pipes into them
+			var meters = {};
+			st.conns.forEach(function(c) { if (isMeter(c[1])) meters[c[1]] = true; });
+			Object.keys(meters).forEach(function(b) {
+				var into = [], got = 0;
+				st.conns.forEach(function(c, ix) { if (c[1] !== b) return; if (knownOutlet(c[0])) got += flows[ix]; else into.push(ix); });
+				var short = Math.max(0, meter(b) || 0) - got;
+				if (short > tol && into.length) into.forEach(function(ix) { flows[ix] = short / into.length; });
+			});
+			return flows;
+		}
+		var liveFlows = null;
 		function flowOn(c) {
-			var a = c[0], b = c[1], v = outValue(a);
-			if (isMeter(b)) { var j = junction(a), n = children(a).length; return flowValue(b) + (j && j.bad ? j.diff / n : 0); }
-			if (sinkNamed(b)) return attribute(v, sinksOn(a)).by[b] || 0;
-			var used = 0;
-			children(a).forEach(function(x) { if (x === b) return; if (isMeter(x)) used += flowValue(x); else if (sinkNamed(x)) used += attribute(v, sinksOn(a)).by[x] || 0; });
-			return Math.max(0, v - used);
+			if (!liveFlows) liveFlows = solve(flowValue, function(k) { return isOverflow(k) ? overflowNow(nodeOf(k)) : estNamed(k) ? estimatedInflow(k) : 0; });
+			var ix = st.conns.indexOf(c);
+			return ix >= 0 ? liveFlows[ix] : 0;
+		}
+
+		// ---- a tank without a sensor: what it holds, worked out from the meters since a known volume ----
+		// (TopTank, 2026-11-20: Pool's PumpF sees all of Pool's water; what PipeSplit does not take went up to TopTank,
+		// what PipeSplit takes beyond PumpF came down from it.) Kept between 0 and its capacity; the litres it would
+		// have needed below 0, or held above its capacity, are kept too: either means the start was wrong or water
+		// went somewhere the meters do not see.
+		var STEP_MS = 30000;
+		function rangeFor(ms) { for (var i = 0; i < RANGES.length; i++) if (RANGES[i][1] >= ms) return RANGES[i][1]; return null; }
+		function networkMeters() { var list = []; st.conns.forEach(function(c) { [c[0], c[1]].forEach(function(k) { if (isMeter(k) && list.indexOf(k) < 0) list.push(k); }); }); return list; }
+		// every pipe's flow every 30 s from t0 to now, from the meters' history: [{t, flows}] or null while it is read
+		var timelineCache = {};
+		function timeline(t0) {
+			var c = timelineCache[t0];
+			if (c && Date.now() - c.at < 30000) return c.result;
+			var result = timelineNow(t0);
+			if (result) timelineCache[t0] = {at: Date.now(), result: result};
+			return result;
+		}
+		var STALE_READING_MS = 10 * 60000;   // a meter that stopped reporting counts as still, not as its last value
+		function timelineNow(t0) {
+			var now = Date.now(), range = rangeFor(now - t0 + 120000);
+			if (!range) return {tooOld: true};
+			var keys = networkMeters(), data = {}, missing = false;
+			keys.forEach(function(k) { var d = wantHistory(k, range); if (!d) missing = true; data[k] = d || []; });
+			if (missing) return null;
+			var cursor = {}, out = [];
+			keys.forEach(function(k) { cursor[k] = 0; });
+			function at(k, t) {
+				var d = data[k], i = cursor[k];
+				while (i + 1 < d.length && d[i + 1].t <= t) i++;
+				cursor[k] = i;
+				return d.length && d[i].t <= t && t - d[i].t < STALE_READING_MS ? d[i].v : 0;
+			}
+			for (var t = t0; t <= now; t += STEP_MS) {
+				var tt = t;
+				out.push({t: t, flows: solve(function(k) { return at(k, tt); }, function() { return 0; })});
+			}
+			return {steps: out};
+		}
+		function tankEstimate(name) {
+			var t = tel(name);
+			if (!t || t.level || t.knownVolume == null || !t.knownAt) return null;
+			var tl = timeline(t.knownAt);
+			if (!tl) return {waiting: true};
+			if (tl.tooOld) return {tooOld: true};
+			var v = t.knownVolume, cap = t.capacity || Infinity, inL = 0, outL = 0, overL = 0, shortL = 0;
+			tl.steps.forEach(function(step) {
+				var fin = 0, fout = 0;
+				st.conns.forEach(function(c, ix) { if (c[1] === name) fin += step.flows[ix]; if (c[0] === name) fout += step.flows[ix]; });
+				var dIn = fin * STEP_MS / 60000, dOut = fout * STEP_MS / 60000;
+				inL += dIn; outL += dOut;
+				v += dIn;
+				if (v > cap) { overL += v - cap; v = cap; }
+				if (dOut > v) { shortL += dOut - v; v = 0; } else v -= dOut;
+			});
+			return {volume: v, inL: inL, outL: outL, overL: overL, shortL: shortL, since: t.knownAt};
 		}
 
 		// ---- tank balances from the last hour (DeviceViewsHost.fetchHistory), refreshed every minute ----
@@ -422,14 +552,19 @@ var DeviceViewsWaterNetwork = (function() {
 		// unmetered water into a tank over the last hour: rise × area + pumped out − pumped in − overflow
 		function tankBalance(name) {
 			var t = tel(name);
-			if (!t || !t.tank || !t.level || !t.area) return null;
+			if (!t || !t.tank || !t.level || !(t.area || t.capacity)) return null;
+			var units = t.levelUnits || unitsOf(wordNamed(purpose(name), t.level));
+			// litres in the tank for a level reading: % × capacity, else the depth × the surface area
+			var byCapacity = units === '%' && t.capacity > 0;
+			if (!byCapacity && !t.area) return null;
+			if (units === '%' && !byCapacity && !t.fullHeight) return {needsFull: true};
 			var lv = wantHistory(name + ':' + t.level);
 			if (!lv || lv.length < 6) return {waiting: true};
-			var units = t.levelUnits || ((wordNamed(purpose(name), t.level) || {}).Units);
 			function mm(v) { return units === '%' ? v / 100 * (t.fullHeight || 0) : units === 'cm' ? v * 10 : v; }
-			if (units === '%' && !t.fullHeight) return {needsFull: true};
+			function vol(v) { return byCapacity ? v / 100 * t.capacity : mm(v) * t.area; }
 			var k = Math.min(3, Math.floor(lv.length / 3)), first = lv.slice(0, k), last = lv.slice(-k);
 			var h1 = avg(first.map(function(r) { return mm(r.v); })), h2 = avg(last.map(function(r) { return mm(r.v); }));
+			var v1 = avg(first.map(function(r) { return vol(r.v); })), v2 = avg(last.map(function(r) { return vol(r.v); }));
 			var t0 = avg(first.map(function(r) { return r.t; })), t1 = avg(last.map(function(r) { return r.t; }));
 			var inL = 0, outL = 0, missing = false;
 			st.conns.forEach(function(c) {
@@ -441,10 +576,19 @@ var DeviceViewsWaterNetwork = (function() {
 				var mk = name + ':' + m;
 				if (meterRoleOf(mk) === 'outflow' && !st.conns.some(function(c) { return c[0] === mk; })) { var d3 = wantHistory(mk); if (!d3) missing = true; outL += litres(d3, t0, t1); }
 			});
-			var minutes = (t1 - t0) / 60000, rise = h2 - h1, unmetered = rise * t.area + outL - inL;
+			var minutes = (t1 - t0) / 60000, rise = h2 - h1, riseL = v2 - v1, unmetered = riseL + outL - inL;
 			var step = units === '%' ? (t.fullHeight || 0) / 100 : units === 'cm' ? 10 : 1;
-			return {minutes: minutes, rise: rise, inL: inL, outL: outL, unmetered: unmetered, perMinute: minutes > 0 ? unmetered / minutes : 0,
-				resolutionL: step * t.area, resolutionMm: step, missing: missing};
+			return {minutes: minutes, rise: rise, riseL: riseL, byCapacity: byCapacity, inL: inL, outL: outL, unmetered: unmetered, perMinute: minutes > 0 ? unmetered / minutes : 0,
+				resolutionL: byCapacity ? t.capacity / 100 : step * t.area, resolutionMm: step, missing: missing};
+		}
+		// what went into a tank through metered pipes over the last hour (a tank without a sensor: all we know)
+		function filledLastHour(name) {
+			if (!st.conns.some(function(c) { return c[1] === name; })) return null;
+			var tl = timeline(Date.now() - HISTORY_MS);
+			if (!tl || tl.tooOld) return undefined;
+			var total = 0;
+			tl.steps.forEach(function(step) { st.conns.forEach(function(c, ix) { if (c[1] === name) total += step.flows[ix] * STEP_MS / 60000; }); });
+			return total;
 		}
 		function estimatedInflow(name) {
 			var c = st.conns.filter(function(x) { return x[0] === name; })[0];
@@ -580,7 +724,20 @@ var DeviceViewsWaterNetwork = (function() {
 				});
 				head.appendChild(eb);
 			}
+			if (o.sync) {
+				var sync = el('span'), sb = el('button', 'btn btn-default btn-sm', o.sync.label), ss = el('span', 'muted');
+				sb.type = 'button'; ss.style.marginLeft = '8px'; ss.style.fontSize = '12px';
+				sync.appendChild(sb); sync.appendChild(ss);
+				function said(text) { ss.textContent = text || ''; }
+				o.sync.status().then(said, function() { said(''); });
+				sb.addEventListener('click', function() {
+					sb.disabled = true; said('Asking…');
+					o.sync.send().then(said, function(err) { said(err && err.message ? err.message : String(err)); }).then(function() { sb.disabled = false; });
+				});
+				head.insertBefore(sync, head.children[1] || null);
+			}
 			root.appendChild(head);
+			if (o.note) root.appendChild(el('p', 'muted', o.note));
 			var card = el('div', 'dvw-card'), grid = el('div', 'dvw-grid'), left = el('div'), right = el('div');
 			parts.hint = el('div', 'dvw-hint'); parts.net = el('div'); parts.tray = el('div', 'dvw-tray');
 			left.appendChild(parts.hint); left.appendChild(parts.net); left.appendChild(parts.tray);
@@ -637,6 +794,7 @@ var DeviceViewsWaterNetwork = (function() {
 
 		function drawLive() {
 			if (!root) return;
+			liveFlows = null;
 			drawNet(); drawChecks(); drawChart();
 		}
 
@@ -689,7 +847,7 @@ var DeviceViewsWaterNetwork = (function() {
 					});
 					return ms.length;
 				}
-				var noData = (n.kind === 'src' || n.kind === 'mp' || n.kind === 'tank') && !live(n.id);
+				var noData = (n.kind === 'src' || n.kind === 'mp' || n.kind === 'tank') && !live(n.id) && !(n.t && n.t.sensorless);
 				if (n.kind === 'src' || n.kind === 'mp') {
 					txt(y + 22, n.id, 't-name', FS.name);
 					txt(y + 39, noData ? 'no data from it' : n.kind === 'src' ? 'Source' : 'Measuring point', 't-sub', FS.sub);
@@ -697,9 +855,19 @@ var DeviceViewsWaterNetwork = (function() {
 				} else if (n.kind === 'tank') {
 					var t = n.t, hasM = n.ports.some(function(p) { return p.meter; });
 					txt(y + 22, n.id, 't-name', FS.name);
-					txt(y + 39, noData ? 'no data from it' : t.shape === 'cone' ? 'Source · tank (cone)' : 'Source · tank', 't-sub', FS.sub);
+					txt(y + 39, noData ? 'no data from it' : t.sensorless && !live(n.id) ? 'Source · tank, no sensor' : t.shape === 'cone' ? 'Source · tank (cone)' : 'Source · tank', 't-sub', FS.sub);
 					var d = depthMm(n.id), pc = percentOf(n.id), lvl = pc === null ? 0 : pc / 100, big, small = '';
-					if (!t.level) { big = 'level ?'; small = 'no level chosen'; }
+					var est = !t.level ? tankEstimate(n.id) : null;
+					if (est && est.volume != null) {
+						big = '≈ ' + Math.round(est.volume).toLocaleString() + ' L';
+						small = (t.capacity ? 'of ' + Math.round(t.capacity).toLocaleString() + ' L · ' : '') + 'estimated';
+						if (t.capacity) lvl = est.volume / t.capacity;
+					} else if (!t.level) {
+						var fl1 = filledLastHour(n.id);
+						big = t.capacity ? Math.round(t.capacity).toLocaleString() + ' L' : 'level ?';
+						small = fl1 ? '+' + Math.round(fl1).toLocaleString() + ' L last hour' : t.sensorless && !live(n.id) ? 'no sensor yet' : 'no level chosen';
+					}
+					else if (pc !== null && t.capacity) { big = pc.toFixed(0) + ' %'; small = Math.round(pc / 100 * t.capacity).toLocaleString() + ' of ' + Math.round(t.capacity).toLocaleString() + ' L'; }
 					else if (d !== null && t.area) { big = (d / 1000).toFixed(2) + ' m'; small = Math.round(d * t.area).toLocaleString() + ' L' + (pc !== null ? ' · ' + pc.toFixed(0) + ' %' : ''); }
 					else if (pc !== null) big = pc.toFixed(0) + ' %';
 					else big = '—';
@@ -798,6 +966,9 @@ var DeviceViewsWaterNetwork = (function() {
 			var eb = el('button', 'dvw-chip', '+ Source without a meter (stream, spring…)'); eb.type = 'button';
 			eb.addEventListener('click', function() { estSheet(null); });
 			tray.appendChild(eb);
+			var tb = el('button', 'dvw-chip', '+ Tank without a sensor'); tb.type = 'button';
+			tb.addEventListener('click', newTankSheet);
+			tray.appendChild(tb);
 		}
 
 		// ---------- sheets ----------
@@ -837,12 +1008,24 @@ var DeviceViewsWaterNetwork = (function() {
 			var draft = JSON.parse(JSON.stringify(t)), mr = {}, mn = {};
 			ms.forEach(function(m) { var k = id + ':' + m; mr[k] = meterRoleOf(k); mn[k] = st.meterNames[k] || ''; });
 			if (draft.role === 'none') draft.role = ms.length ? 'measuring' : 'source';
+			var sensorless = !!t.sensorless, linkTo = '';
 			openSheet(function(sh) {
 				sh.appendChild(el('h3', null, id));
-				sh.appendChild(el('div', 'muted', (typeOf(id) ? typeOf(id) + ' · ' : '') + (ms.length ? ms.length + ' flow meter' + (ms.length > 1 ? 's' : '') : 'no flow meter') + (live(id) ? '' : ' · no data from it now')));
+				sh.appendChild(el('div', 'muted', sensorless && !live(id) ? 'Tank without a sensor: what flows into it comes from the meters before it'
+					: (typeOf(id) ? typeOf(id) + ' · ' : '') + (ms.length ? ms.length + ' flow meter' + (ms.length > 1 ? 's' : '') : 'no flow meter') + (live(id) ? '' : ' · no data from it now')));
+				if (sensorless && !live(id)) {
+					// the Daffodil came: its telepathon becomes this tank's sensor, keeping the pipes
+					var free = liveList().map(function(x) { return x.Name; }).filter(function(n) { return roleOf(n) === 'none'; });
+					sh.appendChild(el('label', null, 'Measured by'));
+					var ms2 = el('select'), none2 = el('option', null, 'no telepathon yet'); none2.value = ''; ms2.appendChild(none2); ms2.style.width = '100%';
+					free.forEach(function(n) { var op = el('option', null, n); op.value = n; ms2.appendChild(op); });
+					ms2.addEventListener('change', function() { linkTo = ms2.value; });
+					sh.appendChild(ms2);
+					sh.appendChild(el('p', 'muted', 'When its sensor is deployed, choose its telepathon here: the tank keeps its pipes and takes the telepathon\'s name, level and meters. A telepathon called ' + id + ' is used by itself.'));
+				}
 				sh.appendChild(el('label', null, 'In the water network it is'));
 				var seg = el('div', 'seg'), body = el('div');
-				[['source', 'Source'], ['measuring', 'Measuring point'], ['none', 'Not in network']].forEach(function(op) {
+				(sensorless ? [['source', 'Source'], ['none', 'Not in network']] : [['source', 'Source'], ['measuring', 'Measuring point'], ['none', 'Not in network']]).forEach(function(op) {
 					var b = el('button', draft.role === op[0] ? 'on' : '', op[1]); b.type = 'button';
 					b.addEventListener('click', function() {
 						draft.role = op[0];
@@ -856,7 +1039,7 @@ var DeviceViewsWaterNetwork = (function() {
 				sh.appendChild(seg); sh.appendChild(body);
 				function fillBody() {
 					body.textContent = '';
-					if (draft.role === 'none') { body.appendChild(el('p', 'muted', 'Its pipes are removed. Its readings are kept as before.')); return; }
+					if (draft.role === 'none') { body.appendChild(el('p', 'muted', sensorless ? 'It is removed, with its pipes.' : 'Its pipes are removed. Its readings are kept as before.')); return; }
 					if (ms.length) {
 						body.appendChild(el('label', null, 'Each flow meter measures'));
 						ms.forEach(function(m) {
@@ -873,12 +1056,15 @@ var DeviceViewsWaterNetwork = (function() {
 						});
 					}
 					if (draft.role !== 'source') return;
+					if (sensorless) draft.tank = true;
 					var tk = el('label'), cb = el('input');
+					if (sensorless) tk.hidden = true;
 					tk.style.fontWeight = 'normal'; cb.type = 'checkbox'; cb.checked = !!draft.tank;
 					cb.addEventListener('change', function() { draft.tank = cb.checked; fillBody(); });
 					tk.appendChild(cb); tk.appendChild(document.createTextNode(' It holds water (a tank, pool or dam)'));
 					body.appendChild(tk);
 					if (!draft.tank) return;
+					if (!draft.level && lw.length) { draft.level = lw[0].name; draft.levelUnits = lw[0].units; }   // how full, when it has one
 					body.appendChild(el('label', null, 'Level from'));
 					var ls = el('select'), none = el('option', null, 'no level sensor yet'); none.value = ''; ls.appendChild(none);
 					lw.forEach(function(w) { var op = el('option', null, 'Purpose:' + w.name + ' (' + w.units + ')'); op.value = w.name; if (draft.level === w.name) op.selected = true; ls.appendChild(op); });
@@ -893,6 +1079,24 @@ var DeviceViewsWaterNetwork = (function() {
 					body.appendChild(shp);
 					var ra;
 					numberRow(body, 'Surface area', draft.area, 'm²', function(v) { draft.area = v; if (draft.rainOnSurface) { draft.rainArea = v; if (ra) ra.value = v; } });
+					numberRow(body, 'Capacity', draft.capacity, 'litres when full', function(v) { draft.capacity = v; });
+					if (!draft.level) {
+						// without a level: what it held at some moment, so what it holds now can be worked out
+						body.appendChild(el('label', null, 'What it held, so what it holds can be worked out'));
+						var kr = el('div', 'mrow'), kv = el('input'), kt = el('input'), empty = el('button', 'btn btn-default btn-xs', 'It is empty now');
+						kv.type = 'number'; kv.style.width = '7em'; kv.value = draft.knownVolume != null ? draft.knownVolume : '';
+						kt.type = 'datetime-local';
+						function local(ms) { var dd = new Date(ms); return dd.getFullYear() + '-' + two(dd.getMonth() + 1) + '-' + two(dd.getDate()) + 'T' + two(dd.getHours()) + ':' + two(dd.getMinutes()); }
+						if (draft.knownAt) kt.value = local(draft.knownAt);
+						function setKnown() { var ms = Date.parse(kt.value); if (kv.value !== '' && !isNaN(ms)) { draft.knownVolume = +kv.value; draft.knownAt = ms; } else { delete draft.knownVolume; delete draft.knownAt; } }
+						kv.addEventListener('input', setKnown); kt.addEventListener('input', setKnown);
+						empty.type = 'button';
+						empty.addEventListener('click', function() { kv.value = 0; kt.value = local(Date.now()); setKnown(); });
+						kr.appendChild(kv); kr.appendChild(el('span', null, 'L at')); kr.appendChild(kt); kr.appendChild(empty);
+						body.appendChild(kr);
+						body.appendChild(el('p', 'muted', 'From then on, what the meters show going into it and coming out of it is added up (up to 7 days back). A leak from it cannot be seen until it has a level sensor.'));
+					}
+					body.appendChild(el('p', 'muted', 'With a level in % and its capacity, what it holds is % × capacity. Its surface area and height are only needed for rain onto it and for its overflow.'));
 					numberRow(body, 'Height when full', draft.fullHeight, 'mm', function(v) { draft.fullHeight = v; });
 					body.appendChild(el('label', null, 'Rain'));
 					var rs = el('select');
@@ -918,16 +1122,48 @@ var DeviceViewsWaterNetwork = (function() {
 						if (selPort && nodeOf(selPort) === id) selPort = null;
 					} else {
 						if (draft.role !== 'source') draft.tank = false;
-						if (!draft.tank) { ['level', 'levelUnits', 'shape', 'area', 'fullHeight', 'overflowHeight', 'overflowWidth', 'rainArea', 'rainOnSurface'].forEach(function(k) { delete draft[k]; }); }
+						if (!draft.tank) { ['level', 'levelUnits', 'shape', 'capacity', 'knownVolume', 'knownAt', 'area', 'fullHeight', 'overflowHeight', 'overflowWidth', 'rainArea', 'rainOnSurface'].forEach(function(k) { delete draft[k]; }); }
 						st.telepathons[id] = draft;
 						for (var k in mr) st.meterRole[k] = mr[k];
 						for (var k2 in mn) { if (mn[k2]) st.meterNames[k2] = mn[k2]; else delete st.meterNames[k2]; }
 					}
 					st.conns = st.conns.filter(function(c) { if (isMeter(c[0]) && st.meterRole[c[0]] === 'sink') return false; if (isMeter(c[1]) && st.meterRole[c[1]] === 'outflow') return false; return true; });
+					if (linkTo && draft.role !== 'none') { linkTank(id, linkTo); changed(); closeSheet(); redraw(); nodeSheet(linkTo); return; }
 					changed(); closeSheet();
 					if (was === 'none' && draft.role !== 'none') justAdded = id;
 					redraw();
 				}}]);
+			});
+		}
+
+		// a tank without a sensor gets one: everything named after the tank is named after the telepathon
+		function linkTank(from, to) {
+			var t = st.telepathons[from];
+			delete st.telepathons[from];
+			delete t.sensorless;
+			st.telepathons[to] = t;
+			function key(k) { return k === from ? to : k === from + ' overflow' ? to + ' overflow' : k.indexOf(from + ':') === 0 ? to + k.substring(from.length) : k; }
+			st.conns = st.conns.map(function(c) { return [key(c[0]), key(c[1])]; });
+			st.sinks.forEach(function(s) { if (s.meter) s.meter = key(s.meter); });
+			if (selPort) selPort = key(selPort);
+			justAdded = to;
+		}
+		function newTankSheet() {
+			openSheet(function(sh) {
+				sh.appendChild(el('h3', null, 'New tank without a sensor'));
+				sh.appendChild(el('div', 'muted', 'A tank with no telepathon yet, e.g. TopTank before its Daffodil. Pipes go into and out of it like any tank; what flows in is what the meters before it measure. When its sensor comes, link it in the tank\'s sheet, or give the telepathon the same name.'));
+				sh.appendChild(el('label', null, 'Name'));
+				var nm = el('input'); nm.type = 'text'; nm.placeholder = 'e.g. TopTank'; nm.style.width = '100%'; sh.appendChild(nm);
+				var msg = el('p', 'text-danger'); sh.appendChild(msg);
+				acts(sh, [{label: 'Cancel', fn: closeSheet}, {label: 'Add', cls: 'btn-primary', fn: function() {
+					var n = cleanName(nm.value);
+					if (!n) return nm.focus();
+					if (nameTaken(n, null) && !(live(n) && roleOf(n) === 'none')) { msg.textContent = 'Something in this network is already called ' + n + '.'; return; }
+					st.telepathons[n] = {role: 'source', tank: true, sensorless: !live(n)};
+					justAdded = n; changed(); closeSheet(); redraw();
+					nodeSheet(n);   // its area, height, rain, overflow
+				}}]);
+				setTimeout(function() { nm.focus(); }, 30);
 			});
 		}
 
@@ -1072,8 +1308,26 @@ var DeviceViewsWaterNetwork = (function() {
 			});
 			NODES.filter(function(n) { return n.kind === 'tank'; }).forEach(function(n) {
 				var t = n.t;
-				if (!t.level) { list.push({id: 't' + n.id, cls: 'warn', title: n.id + ' level', val: 'no sensor yet', detail: 'Without a level the network cannot tell how much water came into ' + n.id + ' without a meter. Choose its level in Edit network when it has one.'}); return; }
-				if (!t.area) { list.push({id: 't' + n.id, cls: 'warn', title: n.id + ' balance', val: 'needs its area', detail: 'Set ' + n.id + '\'s surface area (tap it in Edit network). Then rise in level × area + water pumped out − water pumped in is the water that came in without a meter.'}); return; }
+				if (!t.level && t.knownVolume != null) {
+					var e = tankEstimate(n.id), L0 = function(v) { return Math.round(v).toLocaleString() + ' L'; };
+					if (!e || e.waiting) { list.push({id: 't' + n.id, cls: 'warn', title: n.id + ' (estimated)', val: 'reading history…', detail: 'Reading the meters since ' + stamp(t.knownAt) + '.'}); return; }
+					if (e.tooOld) { list.push({id: 't' + n.id, cls: 'warn', title: n.id + ' (estimated)', val: 'start too old', detail: 'What it held is known from ' + stamp(t.knownAt) + ', more than 7 days ago, further back than the history goes. Give a newer one in its sheet (Edit network), e.g. It is empty now.'}); return; }
+					list.push({id: 't' + n.id, cls: 'ok', title: n.id + ' (estimated)', val: '≈ ' + L0(e.volume) + (t.capacity ? ' of ' + L0(t.capacity) : ''),
+						detail: 'It held ' + L0(t.knownVolume) + ' at ' + stamp(t.knownAt) + '. Since then ' + L0(e.inL) + ' went into it (what PumpF and the meters before it sent that the meters after it did not take) and ' + L0(e.outL) + ' came out of it (what the meters after it took beyond what came from before). A leak from it cannot be seen until it has a level sensor.'});
+					if (e.shortL > st.settings.tolerance * 5) list.push({id: 'ts' + n.id, cls: 'bad', title: 'Water from nowhere after ' + n.id, val: L0(e.shortL),
+						detail: L0(e.shortL) + ' went through the meters after ' + n.id + ' while it should have been empty. Either it held more at ' + stamp(t.knownAt) + ' than given, or water reached them another way (a pipe without a meter).'});
+					if (e.overL > st.settings.tolerance * 5) list.push({id: 'to' + n.id, cls: 'warn', title: n.id + ' over its capacity', val: L0(e.overL),
+						detail: 'Going by the meters, ' + L0(e.overL) + ' more went into ' + n.id + ' than it holds: it overflowed, water leaked on the way up, or it held less at the start than given.'});
+					return;
+				}
+				if (!t.level) {
+					var fl = filledLastHour(n.id);
+					list.push({id: 't' + n.id, cls: 'warn', title: 'Into ' + n.id + ' (no sensor)', val: fl ? Math.round(fl).toLocaleString() + ' L last hour' : 'no sensor yet',
+						detail: (fl ? Math.round(fl).toLocaleString() + ' L went into ' + n.id + ' through the meters before it in the last hour' + (t.capacity ? ' (it holds ' + Math.round(t.capacity).toLocaleString() + ' L)' : '') + '. ' : '')
+							+ 'Without a level the network cannot tell how full it is, nor whether water came in or left it any other way. When its sensor is deployed, link its telepathon in its sheet.'});
+					return;
+				}
+				if (!t.area && !t.capacity) { list.push({id: 't' + n.id, cls: 'warn', title: n.id + ' balance', val: 'needs its capacity', detail: 'Set ' + n.id + '\'s capacity (or its surface area; tap it in Edit network). Then what it gained + water pumped out − water pumped in is the water that came in without a meter.'}); return; }
 				var b = tankBalance(n.id);
 				if (!b || b.waiting) { list.push({id: 't' + n.id, cls: 'warn', title: n.id + ' balance', val: 'reading history…', detail: 'Waiting for the last hour of ' + n.id + '\'s level.'}); return; }
 				if (b.needsFull) { list.push({id: 't' + n.id, cls: 'warn', title: n.id + ' balance', val: 'needs height when full', detail: n.id + '\'s level is in %, so its height when full is needed to turn it into millimetres.'}); return; }
@@ -1081,9 +1335,9 @@ var DeviceViewsWaterNetwork = (function() {
 				var rainMm = t.rainArea ? b.unmetered / t.rainArea : null;
 				list.push({id: 't' + n.id, cls: !clear ? 'ok' : b.unmetered > 0 ? 'warn' : 'bad', title: 'Water into ' + n.id + ' without a meter',
 					val: !clear ? '≈ 0' : (b.unmetered > 0 ? '+' : '') + Math.round(b.unmetered) + ' L' + (rainMm !== null && b.unmetered > 0 ? ' (≈ ' + rainMm.toFixed(0) + ' mm)' : ''),
-					detail: 'Over the last ' + Math.round(b.minutes) + ' minutes ' + n.id + ' rose ' + b.rise.toFixed(0) + ' mm = ' + Math.round(b.rise * t.area) + ' L. Its meters took ' + Math.round(b.outL) + ' L out and ' + Math.round(b.inL) + ' L came in through pipes with meters, so ' + Math.round(b.unmetered) + ' L came in some other way'
+					detail: 'Over the last ' + Math.round(b.minutes) + ' minutes ' + n.id + (b.byCapacity ? ' gained ' + Math.round(b.riseL) + ' L' : ' rose ' + b.rise.toFixed(0) + ' mm = ' + Math.round(b.riseL) + ' L') + '. Its meters took ' + Math.round(b.outL) + ' L out and ' + Math.round(b.inL) + ' L came in through pipes with meters, so ' + Math.round(b.unmetered) + ' L came in some other way'
 						+ (b.unmetered < 0 ? ' (less than nothing: water is leaving it without a meter, a leak or an overflow).' : ': rain' + (st.conns.some(function(c) { return estNamed(c[0]) && c[1] === n.id; }) ? ' or the source without a meter that feeds it.' : ', or a stream: add a source without a meter if one feeds it.'))
-						+ ' The level reads in steps of ' + b.resolutionMm.toFixed(0) + ' mm = ' + Math.round(b.resolutionL) + ' L on ' + t.area + ' m², so less than that is not counted.' + (b.missing ? ' Some meter history is still coming.' : '')});
+						+ (b.byCapacity ? ' The level reads in whole % = ' + Math.round(b.resolutionL) + ' L, so less than that is not counted.' : ' The level reads in steps of ' + b.resolutionMm.toFixed(0) + ' mm = ' + Math.round(b.resolutionL) + ' L on ' + t.area + ' m², so less than that is not counted.') + (b.missing ? ' Some meter history is still coming.' : '')});
 				var ov = overflowNow(n.id);
 				if (ov > 0.5) list.push({id: 'ov' + n.id, cls: 'bad', title: n.id + ' overflowing', val: '≈ ' + ov.toFixed(0) + ' l/m', detail: 'The level is ' + (depthMm(n.id) - t.overflowHeight).toFixed(0) + ' mm above the overflow (' + t.overflowHeight + ' mm). Over a ' + (t.overflowWidth || 0.3) + ' m lip that is about ' + ov.toFixed(0) + ' l/m (weir formula). Rough.'});
 			});
@@ -1157,11 +1411,14 @@ var DeviceViewsWaterNetwork = (function() {
 			// close up: a dot on each reading, so it is clear where the samples are
 			var shown = (data || []).filter(function(r) { return r.t >= t0 && r.t <= t1; });
 			if (shown.length && shown.length <= 150) shown.forEach(function(r) { S('circle', {cx: x(r.t), cy: y(r.v), r: 3, fill: '#2a7fd4'}, svg); });
-			if (chartView) S('text', {x: CH.W - CH.r, y: CH.t + 10, 'text-anchor': 'end'}, svg, new Date(t0).toLocaleDateString() + ' ' + hhmm(t0) + ' – ' + hhmm(t1) + ' · ' + shown.length + ' readings');
+			// how much water went through in what is shown: each reading's l/m for as long as it held
+			var total = data ? litres(data, t0, t1) : null, upTotal = upData ? litres(upData, t0, t1) : null;
+			function litresText(v) { return Math.round(v).toLocaleString() + ' L'; }
+			S('text', {x: CH.W - CH.r, y: CH.t + 10, 'text-anchor': 'end'}, svg, (chartView ? new Date(t0).toLocaleDateString() + ' ' + hhmm(t0) + ' – ' + hhmm(t1) + ' · ' + shown.length + ' readings · ' : '') + (total !== null ? litresText(total) : ''));
 			if (drag) S('rect', {x: Math.min(drag.a, drag.b), y: CH.t, width: Math.abs(drag.b - drag.a), height: CH.H - CH.t - CH.b, 'class': 'selr'}, svg);
 			function li(col, txt, dashed) { var s = el('span'), sw = el('span', 'sw'); sw.style.background = dashed ? 'none' : col; if (dashed) { sw.style.borderTop = '2px dashed ' + col; sw.style.height = '0'; } s.appendChild(sw); s.appendChild(document.createTextNode(txt)); parts.legend.appendChild(s); }
-			li('#2a7fd4', epLabel(chartKey));
-			if (up) li('#5f6b64', epLabel(up) + ' (before it)', true);
+			li('#2a7fd4', epLabel(chartKey) + (total !== null ? ': ' + litresText(total) + ' from ' + hhmm(t0) + ' to ' + hhmm(t1) : ''));
+			if (up) li('#5f6b64', epLabel(up) + ' (before it)' + (upTotal !== null ? ': ' + litresText(upTotal) : ''), true);
 			sk.forEach(function(s) { li(s.color, s.name + ' (' + s.min + '–' + s.max + ')'); });
 			st.sinks.filter(function(s) { return s.meter === chartKey && sk.indexOf(s) < 0; }).forEach(function(s) { li(s.color, s.name + ' (' + s.min + '–' + s.max + ', not connected here)', true); });
 			li('#c0392b', 'unexplained');
@@ -1306,6 +1563,8 @@ var DeviceViewsWaterNetwork = (function() {
 			},
 			name: function() { return st.name; },
 			isEditing: function() { return editing; },
+			// what a tank without a sensor holds, worked out from the meters: {volume, inL, outL, overL, shortL} or null
+			tankEstimate: function(name) { return tankEstimate(name); },
 			chain: function() { return toChain(st, o.teleonomeName, prefix, metersOf); }
 		};
 	}
