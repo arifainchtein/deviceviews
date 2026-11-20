@@ -340,7 +340,10 @@ var DeviceViewsTabs = (function() {
 					n = String(n || '').replace(/[:@#]/g, '').replace(/\s+/g, ' ').trim();
 					if (!n) return;
 					if (networks.some(function(x) { return x.name === n; })) { window.alert('There is already a water network called ' + n + '.'); return; }
-					wnNewName = n; editing = null; active = WN_NEW;
+					wnNewName = n; editing = null;
+					delete wnInstances[WN_NEW];
+					wnInstance(WN_NEW);   // made first: settle() keeps only pills that exist
+					active = WN_NEW;
 					draw();
 				});
 				o.pills.appendChild(addw);
