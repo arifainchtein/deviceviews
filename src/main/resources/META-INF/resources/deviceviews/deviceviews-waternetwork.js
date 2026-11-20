@@ -601,17 +601,32 @@ var DeviceViewsWaterNetwork = (function() {
 			parts.chartMeter.setAttribute('aria-label', 'Meter to chart');
 			parts.chartMeter.addEventListener('change', function() { chartKey = parts.chartMeter.value; drawChart(); });
 			row.appendChild(parts.chartMeter);
-			parts.zoomOut = el('button', 'btn btn-default btn-sm', 'Zoom out');
-			parts.zoomOut.type = 'button';
-			parts.zoomOut.addEventListener('click', function() { chartView = null; drawChart(); });
-			row.appendChild(parts.zoomOut);
+			// zoom and move: a drag zooms in to what it covers; these step out and along
+			parts.zoomBar = el('span');
+			parts.zoomBar.style.display = 'inline-flex'; parts.zoomBar.style.gap = '4px'; parts.zoomBar.style.flexWrap = 'wrap';
+			function zbtn(label, title, fn) { var b = el('button', 'btn btn-default btn-sm', label); b.type = 'button'; b.title = title; b.setAttribute('aria-label', title); b.addEventListener('click', fn); parts.zoomBar.appendChild(b); return b; }
+			zbtn('◀', 'Earlier', function() { pan(-0.5); });
+			zbtn('−', 'Zoom out a step', function() { zoomBy(2); });
+			zbtn('▶', 'Later', function() { pan(0.5); });
+			zbtn('Whole period', 'Show the whole period', function() { chartView = null; drawChart(); });
+			row.appendChild(parts.zoomBar);
 			ch.appendChild(row);
-			ch.appendChild(el('span', 'muted', o.canEdit ? 'Drag across the chart to zoom in or to name a defined sink' : 'Drag across the chart to zoom in'));
+			ch.appendChild(el('span', 'muted', 'Drag across the chart to zoom in; again to zoom in more'));
 			cc.appendChild(ch);
 			parts.chart = S('svg', {'class': 'dvw-chart', viewBox: '0 0 1000 260', 'aria-label': 'Flow chart'});
 			cc.appendChild(parts.chart);
 			parts.legend = el('div', 'dvw-legend');
 			cc.appendChild(parts.legend);
+			if (o.canEdit) {
+				var nb = el('div');
+				nb.style.marginTop = '8px';
+				parts.nameShown = el('button', 'btn btn-primary btn-sm', 'Name a defined sink from what is shown');
+				parts.nameShown.type = 'button';
+				parts.nameShown.addEventListener('click', function() { newSinkSheet(parts.t0, parts.t1); });
+				nb.appendChild(parts.nameShown);
+				nb.appendChild(el('span', 'muted', '  zoom in until the chart shows only the run you want to name'));
+				cc.appendChild(nb);
+			}
 			root.appendChild(cc);
 			chartEvents();
 
@@ -1103,7 +1118,7 @@ var DeviceViewsWaterNetwork = (function() {
 			parts.chartMeter.value = chartKey;
 			var data = wantHistory(chartKey, chartRange), up = upstreamMeter(chartKey), upData = up ? wantHistory(up, chartRange) : null;
 			var t1 = chartView ? chartView.t1 : Date.now(), t0 = chartView ? chartView.t0 : t1 - chartRange;
-			parts.zoomOut.hidden = !chartView;
+			parts.zoomBar.hidden = !chartView;
 			var ymax = 10;
 			(data || []).concat(upData || []).forEach(function(r) { if (r.t >= t0 && r.t <= t1 && r.v > ymax) ymax = r.v; });
 			ymax = Math.ceil(ymax * 1.1 / 10) * 10;
@@ -1123,7 +1138,7 @@ var DeviceViewsWaterNetwork = (function() {
 			var span = t1 - t0, days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 			for (var m = 0; m <= 6; m++) {
 				var tt = t0 + span * m / 6, dd = new Date(tt);
-				S('text', {x: x(tt), y: CH.H - 10, 'text-anchor': 'middle'}, svg, span > 20 * 3600000 ? days[dd.getDay()] + ' ' + hhmm(tt) : hhmm(tt));
+				S('text', {x: x(tt), y: CH.H - 10, 'text-anchor': 'middle'}, svg, span > 20 * 3600000 ? days[dd.getDay()] + ' ' + hhmm(tt) : span < 900000 ? hhmm(tt) + ':' + two(dd.getSeconds()) : hhmm(tt));
 			}
 			S('text', {x: CH.l, y: CH.t - 1}, svg, 'l/m');
 			function line(list, cls) {
@@ -1139,6 +1154,10 @@ var DeviceViewsWaterNetwork = (function() {
 			if (!data) S('text', {x: CH.l + 10, y: 40}, svg, 'Reading the history…');
 			else if (!data.length) S('text', {x: CH.l + 10, y: 40}, svg, 'No readings in this period.');
 			line(data, 'ln');
+			// close up: a dot on each reading, so it is clear where the samples are
+			var shown = (data || []).filter(function(r) { return r.t >= t0 && r.t <= t1; });
+			if (shown.length && shown.length <= 150) shown.forEach(function(r) { S('circle', {cx: x(r.t), cy: y(r.v), r: 3, fill: '#2a7fd4'}, svg); });
+			if (chartView) S('text', {x: CH.W - CH.r, y: CH.t + 10, 'text-anchor': 'end'}, svg, new Date(t0).toLocaleDateString() + ' ' + hhmm(t0) + ' – ' + hhmm(t1) + ' · ' + shown.length + ' readings');
 			if (drag) S('rect', {x: Math.min(drag.a, drag.b), y: CH.t, width: Math.abs(drag.b - drag.a), height: CH.H - CH.t - CH.b, 'class': 'selr'}, svg);
 			function li(col, txt, dashed) { var s = el('span'), sw = el('span', 'sw'); sw.style.background = dashed ? 'none' : col; if (dashed) { sw.style.borderTop = '2px dashed ' + col; sw.style.height = '0'; } s.appendChild(sw); s.appendChild(document.createTextNode(txt)); parts.legend.appendChild(s); }
 			li('#2a7fd4', epLabel(chartKey));
@@ -1146,6 +1165,25 @@ var DeviceViewsWaterNetwork = (function() {
 			sk.forEach(function(s) { li(s.color, s.name + ' (' + s.min + '–' + s.max + ')'); });
 			st.sinks.filter(function(s) { return s.meter === chartKey && sk.indexOf(s) < 0; }).forEach(function(s) { li(s.color, s.name + ' (' + s.min + '–' + s.max + ', not connected here)', true); });
 			li('#c0392b', 'unexplained');
+		}
+		function zoomBy(factor) {
+			if (!chartView) return;
+			var now = Date.now(), mid = (chartView.t0 + chartView.t1) / 2, half = (chartView.t1 - chartView.t0) * factor / 2;
+			if (half * 2 >= chartRange) { chartView = null; drawChart(); return; }
+			chartView = clampView(mid - half, mid + half, now);
+			drawChart();
+		}
+		function pan(fraction) {
+			if (!chartView) return;
+			var w = chartView.t1 - chartView.t0;
+			chartView = clampView(chartView.t0 + w * fraction, chartView.t1 + w * fraction, Date.now());
+			drawChart();
+		}
+		function clampView(a, b, now) {
+			var lo = now - chartRange, w = b - a;
+			if (a < lo) { a = lo; b = lo + w; }
+			if (b > now) { b = now; a = now - w; }
+			return {t0: a, t1: b};
 		}
 		function chartX(ev) { var r = parts.chart.getBoundingClientRect(); return Math.max(CH.l, Math.min(CH.W - CH.r, (ev.clientX - r.left) * CH.W / r.width)); }
 		function xToT(px) { return parts.t0 + (px - CH.l) / (CH.W - CH.l - CH.r) * (parts.t1 - parts.t0); }
@@ -1157,19 +1195,10 @@ var DeviceViewsWaterNetwork = (function() {
 				var a = Math.min(drag.a, drag.b), b = Math.max(drag.a, drag.b);
 				drag = null;
 				if (b - a < 8) return drawChart();
-				dragSheet(xToT(a), xToT(b));
-			});
-		}
-		// what to do with the stretch dragged across: look closer, or name the use it shows
-		function dragSheet(ta, tb) {
-			if (!o.canEdit) { chartView = {t0: ta, t1: tb}; drawChart(); return; }
-			openSheet(function(sh) {
-				sh.appendChild(el('h3', null, hhmm(ta) + ' to ' + hhmm(tb)));
-				sh.appendChild(el('div', 'muted', epLabel(chartKey) + ', ' + new Date(ta).toLocaleDateString()));
-				sh.appendChild(el('p', null, 'Zoom in to pick the stretch more exactly, or name the use this stretch shows as a defined sink.'));
-				acts(sh, [{label: 'Cancel', fn: function() { closeSheet(); drawChart(); }},
-					{label: 'Zoom in', fn: function() { closeSheet(); chartView = {t0: ta, t1: tb}; drawChart(); }},
-					{label: 'Name a defined sink', cls: 'btn-primary', fn: function() { closeSheet(); newSinkSheet(ta, tb); }}]);
+				var ta = xToT(a), tb = xToT(b);
+				if (tb - ta < 20000) { var mid = (ta + tb) / 2; ta = mid - 10000; tb = mid + 10000; }   // 20 s at the closest
+				chartView = {t0: ta, t1: tb};
+				drawChart();
 			});
 		}
 		function newSinkSheet(ta, tb) {
