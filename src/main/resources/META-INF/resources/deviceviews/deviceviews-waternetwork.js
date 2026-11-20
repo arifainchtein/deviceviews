@@ -333,6 +333,9 @@ var DeviceViewsWaterNetwork = (function() {
 		}
 
 		// ---- a tank's level ----
+		// whether a tank's level has a reading now (-99, the sensor's "none", does not count): a tank without
+		// one is worked out from the meters, like a tank without a sensor (TopTank's Daffodil: -99, 2026-11-20)
+		function sensing(name) { var t = tel(name); return !!(t && t.level && num(wordValue(purpose(name), t.level)) !== null); }
 		function depthMm(name) {
 			var t = tel(name);
 			if (!t || !t.tank || !t.level) return null;
@@ -505,7 +508,7 @@ var DeviceViewsWaterNetwork = (function() {
 		}
 		function tankEstimate(name) {
 			var t = tel(name);
-			if (!t || t.level || t.knownVolume == null || !t.knownAt) return null;
+			if (!t || sensing(name) || t.knownVolume == null || !t.knownAt) return null;
 			var tl = timeline(t.knownAt);
 			if (!tl) return {waiting: true};
 			if (tl.tooOld) return {tooOld: true};
@@ -651,6 +654,26 @@ var DeviceViewsWaterNetwork = (function() {
 				});
 				H = inNet.length ? tallest + 40 : 40;
 				ranks.forEach(function(list) { var tot = list.reduce(function(s, n) { return s + n.h; }, 0) + (list.length - 1) * 34, off = (H - 40 - tot) / 2; list.forEach(function(n) { n.y += off; }); });
+				// A pipe that skips a column (Pool -> PipeSplit past TopTank) turns just after its source and runs
+				// across at its destination's height: the boxes in the columns it crosses move up out of its way
+				// (2026-11-20), and everything moves down again if that took them off the top.
+				var clear = 22;
+				edges.forEach(function(c) {
+					var a = byId[nodeOf(c[0])], b = byId[nodeOf(c[1])];
+					if (b.rank - a.rank < 2) return;
+					var yLine = meterY(b, c[1]);
+					if (!b.ports.some(function(p) { return p.meter && p.key === c[1]; })) yLine = b.y + b.h / 2;
+					for (var r2 = a.rank + 1; r2 < b.rank; r2++) {
+						var col = ranks[r2], lowest = null;
+						col.forEach(function(n) { if (n.y < yLine + clear && n.y + n.h > yLine - clear) lowest = Math.max(lowest === null ? -1e9 : lowest, n.y + n.h); });
+						if (lowest === null) continue;
+						var up = lowest - (yLine - clear);
+						col.forEach(function(n) { if (n.y < yLine + clear) n.y -= up; });
+					}
+				});
+				var top = Math.min.apply(null, inNet.map(function(n) { return n.y; }).concat([44]));
+				if (top < 44) { inNet.forEach(function(n) { n.y += 44 - top; }); H += 44 - top; }
+				H = Math.max(H, Math.max.apply(null, inNet.map(function(n) { return n.y + n.h; }).concat([0])) + 20);
 			} else {
 				W = 400;
 				var y = 14;
@@ -693,7 +716,8 @@ var DeviceViewsWaterNetwork = (function() {
 			return {W: W, H: shelfTop === null ? Math.max(H, narrow ? 200 : 160) : H, narrow: narrow, shelfTop: shelfTop, topY: topY};
 		}
 
-		function pathFor(a, b, narrow, back) {
+		function pathFor(a, b, narrow, back, skip) {
+			if (skip && !narrow && !back) { var mx2 = a[0] + 24; return 'M' + a[0] + ' ' + a[1] + ' H' + mx2 + ' V' + b[1] + ' H' + b[0]; }
 			if (back && !narrow) return 'M' + a[0] + ' ' + a[1] + ' H' + (a[0] + 18) + ' V' + L.topY + ' H' + (b[0] - 18) + ' V' + b[1] + ' H' + b[0];
 			if (back) return 'M' + a[0] + ' ' + a[1] + ' V' + (a[1] + 16) + ' H' + (L.W - 4) + ' V' + (b[1] - 16) + ' H' + b[0] + ' V' + b[1];
 			if (!narrow) { var mx = a[0] + Math.max(24, (b[0] - a[0]) / 2); return 'M' + a[0] + ' ' + a[1] + ' H' + mx + ' V' + b[1] + ' H' + b[0]; }
@@ -817,7 +841,8 @@ var DeviceViewsWaterNetwork = (function() {
 				var A = PORTS[c[0]], B = PORTS[c[1]];
 				if (!A || !B || !A.out || !B['in']) return;
 				var back = isOverflow(c[0]) || (narrow ? B['in'][1] <= A.out[1] : B['in'][0] <= A.out[0]);
-				var d = pathFor(A.out, B['in'], narrow, back), flow = flowOn(c), j = junction(c[0]);
+				var skip = B.node.rank - A.node.rank > 1 && !A.node.shelf && !B.node.shelf;
+				var d = pathFor(A.out, B['in'], narrow, back, skip), flow = flowOn(c), j = junction(c[0]);
 				var bed = S('path', {d: d, 'class': 'pipe bed', 'stroke-width': 10}, gp);
 				if (flow > 0.05) {
 					var w = Math.min(14, 3 + Math.sqrt(flow) * 1.4), dur = Math.max(0.25, 3.2 / Math.sqrt(flow + 0.3));
@@ -857,12 +882,12 @@ var DeviceViewsWaterNetwork = (function() {
 					txt(y + 22, n.id, 't-name', FS.name);
 					txt(y + 39, noData ? 'no data from it' : t.sensorless && !live(n.id) ? 'Source · tank, no sensor' : t.shape === 'cone' ? 'Source · tank (cone)' : 'Source · tank', 't-sub', FS.sub);
 					var d = depthMm(n.id), pc = percentOf(n.id), lvl = pc === null ? 0 : pc / 100, big, small = '';
-					var est = !t.level ? tankEstimate(n.id) : null;
+					var est = !sensing(n.id) ? tankEstimate(n.id) : null;
 					if (est && est.volume != null) {
 						big = '≈ ' + Math.round(est.volume).toLocaleString() + ' L';
 						small = (t.capacity ? 'of ' + Math.round(t.capacity).toLocaleString() + ' L · ' : '') + 'estimated';
 						if (t.capacity) lvl = est.volume / t.capacity;
-					} else if (!t.level) {
+					} else if (!sensing(n.id)) {
 						var fl1 = filledLastHour(n.id);
 						big = t.capacity ? Math.round(t.capacity).toLocaleString() + ' L' : 'level ?';
 						small = fl1 ? '+' + Math.round(fl1).toLocaleString() + ' L last hour' : t.sensorless && !live(n.id) ? 'no sensor yet' : 'no level chosen';
@@ -1064,7 +1089,8 @@ var DeviceViewsWaterNetwork = (function() {
 					tk.appendChild(cb); tk.appendChild(document.createTextNode(' It holds water (a tank, pool or dam)'));
 					body.appendChild(tk);
 					if (!draft.tank) return;
-					if (!draft.level && lw.length) { draft.level = lw[0].name; draft.levelUnits = lw[0].units; }   // how full, when it has one
+					var reading = lw.filter(function(w) { return num(wordValue(purpose(id), w.name)) !== null; });
+					if (!draft.level && reading.length) { draft.level = reading[0].name; draft.levelUnits = reading[0].units; }   // how full, when it reads one
 					body.appendChild(el('label', null, 'Level from'));
 					var ls = el('select'), none = el('option', null, 'no level sensor yet'); none.value = ''; ls.appendChild(none);
 					lw.forEach(function(w) { var op = el('option', null, 'Purpose:' + w.name + ' (' + w.units + ')'); op.value = w.name; if (draft.level === w.name) op.selected = true; ls.appendChild(op); });
@@ -1080,8 +1106,8 @@ var DeviceViewsWaterNetwork = (function() {
 					var ra;
 					numberRow(body, 'Surface area', draft.area, 'm²', function(v) { draft.area = v; if (draft.rainOnSurface) { draft.rainArea = v; if (ra) ra.value = v; } });
 					numberRow(body, 'Capacity', draft.capacity, 'litres when full', function(v) { draft.capacity = v; });
-					if (!draft.level) {
-						// without a level: what it held at some moment, so what it holds now can be worked out
+					if (!draft.level || num(wordValue(purpose(id), draft.level)) === null) {
+						// without a level (or one that reads nothing yet): what it held at some moment, so what it holds now can be worked out
 						body.appendChild(el('label', null, 'What it held, so what it holds can be worked out'));
 						var kr = el('div', 'mrow'), kv = el('input'), kt = el('input'), empty = el('button', 'btn btn-default btn-xs', 'It is empty now');
 						kv.type = 'number'; kv.style.width = '7em'; kv.value = draft.knownVolume != null ? draft.knownVolume : '';
@@ -1308,7 +1334,7 @@ var DeviceViewsWaterNetwork = (function() {
 			});
 			NODES.filter(function(n) { return n.kind === 'tank'; }).forEach(function(n) {
 				var t = n.t;
-				if (!t.level && t.knownVolume != null) {
+				if (!sensing(n.id) && t.knownVolume != null) {
 					var e = tankEstimate(n.id), L0 = function(v) { return Math.round(v).toLocaleString() + ' L'; };
 					if (!e || e.waiting) { list.push({id: 't' + n.id, cls: 'warn', title: n.id + ' (estimated)', val: 'reading history…', detail: 'Reading the meters since ' + stamp(t.knownAt) + '.'}); return; }
 					if (e.tooOld) { list.push({id: 't' + n.id, cls: 'warn', title: n.id + ' (estimated)', val: 'start too old', detail: 'What it held is known from ' + stamp(t.knownAt) + ', more than 7 days ago, further back than the history goes. Give a newer one in its sheet (Edit network), e.g. It is empty now.'}); return; }
@@ -1320,7 +1346,7 @@ var DeviceViewsWaterNetwork = (function() {
 						detail: 'Going by the meters, ' + L0(e.overL) + ' more went into ' + n.id + ' than it holds: it overflowed, water leaked on the way up, or it held less at the start than given.'});
 					return;
 				}
-				if (!t.level) {
+				if (!sensing(n.id)) {
 					var fl = filledLastHour(n.id);
 					list.push({id: 't' + n.id, cls: 'warn', title: 'Into ' + n.id + ' (no sensor)', val: fl ? Math.round(fl).toLocaleString() + ' L last hour' : 'no sensor yet',
 						detail: (fl ? Math.round(fl).toLocaleString() + ' L went into ' + n.id + ' through the meters before it in the last hour' + (t.capacity ? ' (it holds ' + Math.round(t.capacity).toLocaleString() + ' L)' : '') + '. ' : '')
