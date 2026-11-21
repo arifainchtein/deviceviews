@@ -282,7 +282,7 @@ var DeviceViewsWaterNetwork = (function() {
 		var st = o.chain ? fromChain(o.chain, prefix) : emptyState(o.name || 'Water');
 		var savedChainName = o.chain ? o.chain.Name : null;
 		var editing = !o.chain && !!o.canEdit, dirty = !o.chain, snapshot = o.chain ? JSON.stringify(st) : null;
-		var selPort = null, justAdded = null, openChecks = {}, chartKey = null, drag = null, message = '';
+		var selPort = null, justAdded = null, chartKey = null, drag = null, message = '';
 		var chartRange = HISTORY_MS, chartView = null;   // the period fetched, and the part of it shown (zoomed) or null
 		var history = {};   // "T:word|range" -> {at, data: [{t, v}], pending}
 		var NODES = [], PORTS = {}, L = null;
@@ -768,12 +768,11 @@ var DeviceViewsWaterNetwork = (function() {
 			}
 			root.appendChild(head);
 			if (o.note) root.appendChild(el('p', 'muted', o.note));
-			var card = el('div', 'dvw-card'), grid = el('div', 'dvw-grid'), left = el('div'), right = el('div');
+			// the diagram takes the whole width: the list of checks beside it was dropped (Ari 2026-11-21, it
+			// took a lot of room, most of all on a phone); leaks and overflows reach people as alerts instead
+			var card = el('div', 'dvw-card');
 			parts.hint = el('div', 'dvw-hint'); parts.net = el('div'); parts.tray = el('div', 'dvw-tray');
-			left.appendChild(parts.hint); left.appendChild(parts.net); left.appendChild(parts.tray);
-			parts.checks = el('div', 'dvw-checks');
-			right.appendChild(parts.checks);
-			grid.appendChild(left); grid.appendChild(right); card.appendChild(grid); root.appendChild(card);
+			card.appendChild(parts.hint); card.appendChild(parts.net); card.appendChild(parts.tray); root.appendChild(card);
 
 			var cc = el('div', 'dvw-card'), ch = el('div', 'dvw-head'), row = el('div');
 			row.style.display = 'flex'; row.style.gap = '8px'; row.style.alignItems = 'center'; row.style.flexWrap = 'wrap';
@@ -826,7 +825,7 @@ var DeviceViewsWaterNetwork = (function() {
 		function drawLive() {
 			if (!root) return;
 			liveFlows = null;
-			drawNet(); drawChecks(); drawChart();
+			drawNet(); drawChart();
 		}
 
 		function drawNet() {
@@ -1324,68 +1323,6 @@ var DeviceViewsWaterNetwork = (function() {
 		}
 
 		// ---------- checks ----------
-		function drawChecks() {
-			var list = [];
-			Object.keys(PORTS).forEach(function(k) {
-				var j = junction(k);
-				if (j && j.apart) list.push({id: 'j' + k, cls: 'warn', title: epLabel(k) + ' → ' + children(k).map(epLabel).join(' + '), val: 'not compared',
-					detail: j.missing ? 'One of these meters has not reported yet.' : 'These meters were read ' + Math.round(j.spread) + ' s apart, so their flows are not compared (more than ' + STALE_APART_SECONDS + ' s).'});
-				else if (j) list.push({id: 'j' + k, cls: j.bad ? 'bad' : 'ok', title: epLabel(k) + ' → ' + children(k).map(epLabel).join(' + '), val: j.bad ? 'lost ' + j.diff.toFixed(1) + ' l/m' : 'balanced',
-					detail: epLabel(k) + ' ' + f(outValue(k)) + ' l/m; the meters after it add up to ' + f(j.sum) + ' l/m. ' + (j.bad ? j.diff.toFixed(1) + ' l/m is leaving the pipe between them.' : 'Within ±' + st.settings.tolerance + ' l/m.')});
-				var sk = sinksOn(k);
-				if (sk.length) {
-					var v = outValue(k), at = attribute(v, sk), names = Object.keys(at.by);
-					list.push({id: 's' + k, cls: at.unexplained > 0.05 ? 'bad' : 'ok', title: epLabel(k) + ' explained', val: v < st.settings.minFlow ? 'no flow' : at.unexplained > 0.05 ? '? ' + at.unexplained.toFixed(1) + ' l/m' : names.join(' + '),
-						detail: at.unexplained > 0.05 ? at.unexplained.toFixed(1) + ' l/m matches none of its defined sinks (' + sk.map(function(s) { return s.name + ' ' + s.min + '–' + s.max; }).join(', ') + '). A new use to name, or a leak after this meter.' : 'Every litre on this meter belongs to a defined sink.'});
-				}
-			});
-			NODES.filter(function(n) { return n.kind === 'tank'; }).forEach(function(n) {
-				var t = n.t;
-				if (!sensing(n.id) && t.knownVolume != null) {
-					var e = tankEstimate(n.id), L0 = function(v) { return Math.round(v).toLocaleString() + ' L'; };
-					if (!e || e.waiting) { list.push({id: 't' + n.id, cls: 'warn', title: n.id + ' (estimated)', val: 'reading history…', detail: 'Reading the meters since ' + stamp(t.knownAt) + '.'}); return; }
-					if (e.tooOld) { list.push({id: 't' + n.id, cls: 'warn', title: n.id + ' (estimated)', val: 'start too old', detail: 'What it held is known from ' + stamp(t.knownAt) + ', more than 7 days ago, further back than the history goes. Give a newer one in its sheet (Edit network), e.g. It is empty now.'}); return; }
-					list.push({id: 't' + n.id, cls: 'ok', title: n.id + ' (estimated)', val: '≈ ' + L0(e.volume) + (t.capacity ? ' of ' + L0(t.capacity) : ''),
-						detail: 'It held ' + L0(t.knownVolume) + ' at ' + stamp(t.knownAt) + '. Since then ' + L0(e.inL) + ' went into it (what PumpF and the meters before it sent that the meters after it did not take) and ' + L0(e.outL) + ' came out of it (what the meters after it took beyond what came from before). A leak from it cannot be seen until it has a level sensor.'});
-					if (e.shortL > st.settings.tolerance * 5) list.push({id: 'ts' + n.id, cls: 'bad', title: 'Water from nowhere after ' + n.id, val: L0(e.shortL),
-						detail: L0(e.shortL) + ' went through the meters after ' + n.id + ' while it should have been empty. Either it held more at ' + stamp(t.knownAt) + ' than given, or water reached them another way (a pipe without a meter).'});
-					if (e.overL > st.settings.tolerance * 5) list.push({id: 'to' + n.id, cls: 'warn', title: n.id + ' over its capacity', val: L0(e.overL),
-						detail: 'Going by the meters, ' + L0(e.overL) + ' more went into ' + n.id + ' than it holds: it overflowed, water leaked on the way up, or it held less at the start than given.'});
-					return;
-				}
-				if (!sensing(n.id)) {
-					var fl = filledLastHour(n.id);
-					list.push({id: 't' + n.id, cls: 'warn', title: 'Into ' + n.id + ' (no sensor)', val: fl ? Math.round(fl).toLocaleString() + ' L last hour' : 'no sensor yet',
-						detail: (fl ? Math.round(fl).toLocaleString() + ' L went into ' + n.id + ' through the meters before it in the last hour' + (t.capacity ? ' (it holds ' + Math.round(t.capacity).toLocaleString() + ' L)' : '') + '. ' : '')
-							+ 'Without a level the network cannot tell how full it is, nor whether water came in or left it any other way. When its sensor is deployed, link its telepathon in its sheet.'});
-					return;
-				}
-				if (!t.area && !t.capacity) { list.push({id: 't' + n.id, cls: 'warn', title: n.id + ' balance', val: 'needs its capacity', detail: 'Set ' + n.id + '\'s capacity (or its surface area; tap it in Edit network). Then what it gained + water pumped out − water pumped in is the water that came in without a meter.'}); return; }
-				var b = tankBalance(n.id);
-				if (!b || b.waiting) { list.push({id: 't' + n.id, cls: 'warn', title: n.id + ' balance', val: 'reading history…', detail: 'Waiting for the last hour of ' + n.id + '\'s level.'}); return; }
-				if (b.needsFull) { list.push({id: 't' + n.id, cls: 'warn', title: n.id + ' balance', val: 'needs height when full', detail: n.id + '\'s level is in %, so its height when full is needed to turn it into millimetres.'}); return; }
-				var clear = Math.abs(b.unmetered) > b.resolutionL;
-				var rainMm = t.rainArea ? b.unmetered / t.rainArea : null;
-				list.push({id: 't' + n.id, cls: !clear ? 'ok' : b.unmetered > 0 ? 'warn' : 'bad', title: 'Water into ' + n.id + ' without a meter',
-					val: !clear ? '≈ 0' : (b.unmetered > 0 ? '+' : '') + Math.round(b.unmetered) + ' L' + (rainMm !== null && b.unmetered > 0 ? ' (≈ ' + rainMm.toFixed(0) + ' mm)' : ''),
-					detail: 'Over the last ' + Math.round(b.minutes) + ' minutes ' + n.id + (b.byCapacity ? ' gained ' + Math.round(b.riseL) + ' L' : ' rose ' + b.rise.toFixed(0) + ' mm = ' + Math.round(b.riseL) + ' L') + '. Its meters took ' + Math.round(b.outL) + ' L out and ' + Math.round(b.inL) + ' L came in through pipes with meters, so ' + Math.round(b.unmetered) + ' L came in some other way'
-						+ (b.unmetered < 0 ? ' (less than nothing: water is leaving it without a meter, a leak or an overflow).' : ': rain' + (st.conns.some(function(c) { return estNamed(c[0]) && c[1] === n.id; }) ? ' or the source without a meter that feeds it.' : ', or a stream: add a source without a meter if one feeds it.'))
-						+ (b.byCapacity ? ' The level reads in whole % = ' + Math.round(b.resolutionL) + ' L, so less than that is not counted.' : ' The level reads in steps of ' + b.resolutionMm.toFixed(0) + ' mm = ' + Math.round(b.resolutionL) + ' L on ' + t.area + ' m², so less than that is not counted.') + (b.missing ? ' Some meter history is still coming.' : '')});
-				var ov = overflowNow(n.id);
-				if (ov > 0.5) list.push({id: 'ov' + n.id, cls: 'bad', title: n.id + ' overflowing', val: '≈ ' + ov.toFixed(0) + ' l/m', detail: 'The level is ' + (depthMm(n.id) - t.overflowHeight).toFixed(0) + ' mm above the overflow (' + t.overflowHeight + ' mm). Over a ' + (t.overflowWidth || 0.3) + ' m lip that is about ' + ov.toFixed(0) + ' l/m (weir formula). Rough.'});
-			});
-			var c = parts.checks;
-			c.textContent = '';
-			if (!list.length) list.push({id: 'none', cls: '', title: 'No checks yet', val: '', detail: 'Lay pipes between meters, or name defined sinks on a meter\'s chart, and the checks appear here.'});
-			list.forEach(function(x) {
-				var d = el('div', 'dvw-check ' + x.cls + (openChecks[x.id] ? ' open' : '')), b = el('button');
-				b.type = 'button'; b.setAttribute('aria-expanded', String(!!openChecks[x.id]));
-				b.appendChild(el('span', 'dot')); b.appendChild(el('span', 'ct', x.title)); b.appendChild(el('span', 'cv', x.val));
-				b.addEventListener('click', function() { openChecks[x.id] = !openChecks[x.id]; d.classList.toggle('open'); b.setAttribute('aria-expanded', String(!!openChecks[x.id])); });
-				d.appendChild(b); d.appendChild(el('div', 'cd', x.detail)); c.appendChild(d);
-			});
-		}
-
 		// ---------- chart: a meter's last hour, coloured by the defined sink each reading belongs to ----------
 		var CH = {l: 46, r: 12, t: 12, b: 30, W: 1000, H: 260};
 		function upstreamMeter(k) { var c = st.conns.filter(function(x) { return x[1] === k && isMeter(x[0]); })[0]; return c ? c[0] : null; }
