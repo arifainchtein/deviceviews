@@ -16,8 +16,9 @@ var DeviceViewsHost = {
 	// The device type's logo.
 	logoUrl: function(deviceType) { return '/deviceviews/logos/' + deviceType + '.svg'; },
 	// One dene word's history: req = {telepathon, nucleus, dene, deneWord, range (ms)}; callback(data) with
-	// data = [{timeString: "YYYY-MM-DD HH:MM:SS" (local time), Value}], oldest first.
-	fetchHistory: function(req, callback) { callback([]); },
+	// data = [{timeString: "YYYY-MM-DD HH:MM:SS" (local time), Value}], oldest first. onFail (optional) runs instead
+	// when the host gave up waiting for an answer (the Teleonome's Hippocampus did not answer in time).
+	fetchHistory: function(req, callback, onFail) { callback([]); },
 	// Whether the device has a place on a map: true / false when the host knows (devices.digitalstables.com:
 	// a location set on the device page counts), null to go by the telepathon's own Latitude / Longitude.
 	isLocated: function(telepathon) { return null; },

@@ -529,8 +529,10 @@ var DeviceViewsWaterNetwork = (function() {
 		function wantHistory(k, range) {
 			range = range || HISTORY_MS;
 			var hk = k + '|' + range, h = history[hk];
-			// a longer period changes slowly: fetched again every 5 minutes, the last hour every minute
-			if (h && (h.pending || Date.now() - h.at < (range > HISTORY_MS ? 300000 : 60000))) return h.data;
+			// a longer period changes slowly: fetched again every 5 minutes, the last hour every minute;
+			// one that got no answer (the host gave up on it) is asked again after 30 s (2026-11-26: it used to
+			// stay pending for ever, so a tank's estimate and the events never came)
+			if (h && (h.pending || Date.now() - h.at < (h.failed ? 30000 : range > HISTORY_MS ? 300000 : 60000))) return h.data;
 			if (typeof DeviceViewsHost === 'undefined') return h ? h.data : null;
 			var p = k.split(':');
 			history[hk] = {at: Date.now(), data: h ? h.data : null, pending: true};
@@ -539,6 +541,9 @@ var DeviceViewsWaterNetwork = (function() {
 					.filter(function(r) { return r.t !== null && r.v !== null; }).sort(function(a, b) { return a.t - b.t; });
 				history[hk] = {at: Date.now(), data: list, pending: false};
 				if (root && root.parentNode) drawLive();
+			}, function() {
+				var old = history[hk];   // no answer: keep what was there and ask again soon
+				history[hk] = {at: Date.now(), data: old ? old.data : null, pending: false, failed: true};
 			});
 			return h ? h.data : null;
 		}
