@@ -1061,12 +1061,12 @@ function gloriaLedRow(pw) {
 		{ name: 'RTC cell', c: rtc === null || rtc < 2.4 ? RED : rtc < 2.7 ? ORANGE : GREEN, t: rtc === null ? 'no reading' : rtc.toFixed(2) + ' V' },
 		{ name: 'Flow', c: flow > 0 ? BLUE : OFF, t: flow > 0 ? flow.toFixed(1) + ' L/min' : 'no flow' },
 		{ name: 'RS485', c: !sensors ? OFF : missing ? RED : GREEN, t: !sensors ? 'none' : missing ? missing + ' missing' : sensors + ' ok' },
-		{ name: '-', c: OFF, t: 'not used' },
+		{ name: 'Switch', c: switchOff ? YELLOW : GREEN, t: switchOff ? 'OFF' : 'on' },
 		{ name: 'Mode', c: auto ? GREEN : BLUE, t: auto ? 'AUTO' : 'MANUAL' },
-		{ name: 'Pump', c: switchOff ? RED : pumpOn ? GREEN : YELLOW, t: switchOff ? 'switch OFF' : pumpOn ? 'running' : 'not running' }
+		{ name: 'Pump', c: pumpOn ? GREEN : OFF, t: pumpOn ? 'running' : 'off' }
 	];
 	if (fault) {
-		for (var i = 4; i <= 7; i++) leds[i].c = RED;
+		[4, 5, 7].forEach(function(i) { leds[i].c = RED; leds[i].t = 'no flow'; });  // 6 keeps showing the main switch
 		leds[8].c = RED; leds[8].blink = true; leds[8].t = 'no flow';
 	}
 	if (stale) leds.forEach(function(l) { l.c = YELLOW; l.t = 'data stale'; });
