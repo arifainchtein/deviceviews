@@ -1038,6 +1038,60 @@ function buildLangleyContent(telepathon) {
 	return html;
 }
 
+// Gloria's nine status LEDs as the board shows them, worked out from its latest reading (Ari, 2026-11-27). Same
+// rules as updateStatusLed() in Gloria.ino - keep the two in step. Laid out 4 | 4 | 1 as on the shield. The LEDs on
+// the board go dark at night and on a low battery; this row shows what they mean, not whether they are lit.
+function gloriaLedRow(pw) {
+	function v(name) {
+		for (var i = 0; i < pw.length; i++) if (pw[i]["Name"] === name) return String(pw[i]["Value"]);
+		return null;
+	}
+	function num(name) { var x = parseFloat(v(name)); return isNaN(x) ? null : x; }
+	var GREEN = '#2ecc40', BLUE = '#1e6fff', RED = '#e8262b', ORANGE = '#ff8c00', YELLOW = '#ffc800', OFF = null;
+	var wifi = v("Wifi Status"), relay = v("Relay Status") === "true", opMode = parseInt(v("Op Mode")) || 0;
+	var rtc = num("RTC Battery Voltage"), flow = num("Flow Rate") || 0;
+	var sensors = parseInt(v("RS485 Sensors")) || 0, missing = parseInt(v("RS485 Sensors Missing")) || 0;
+	var auto = v("Pump Mode") === "AUTO", pumpOn = v("Pump On") === "true", fault = v("Pump Fault") === "true";
+	var switchOff = v("Emergency Switch Open") === "true", stale = v("Pump Reason") === "off: stale data";
+	var leds = [
+		{ name: 'WiFi', c: wifi === "1" ? GREEN : wifi === "3" ? BLUE : wifi === "2" ? ORANGE : OFF,
+			t: wifi === "1" ? 'access point' : wifi === "3" ? 'internet' : wifi === "2" ? 'no internet' : 'off' },
+		{ name: 'LoRa', c: relay ? BLUE : GREEN, t: relay ? 'relay mode' : 'active' },
+		{ name: 'Annabelle', c: (opMode & 2) ? GREEN : RED, t: (opMode & 2) ? 'heard' : 'not heard' },
+		{ name: 'RTC cell', c: rtc === null || rtc < 2.4 ? RED : rtc < 2.7 ? ORANGE : GREEN, t: rtc === null ? 'no reading' : rtc.toFixed(2) + ' V' },
+		{ name: 'Flow', c: flow > 0 ? BLUE : OFF, t: flow > 0 ? flow.toFixed(1) + ' L/min' : 'no flow' },
+		{ name: 'RS485', c: !sensors ? OFF : missing ? RED : GREEN, t: !sensors ? 'none' : missing ? missing + ' missing' : sensors + ' ok' },
+		{ name: '-', c: OFF, t: 'not used' },
+		{ name: 'Mode', c: auto ? GREEN : BLUE, t: auto ? 'AUTO' : 'MANUAL' },
+		{ name: 'Pump', c: switchOff ? RED : pumpOn ? GREEN : YELLOW, t: switchOff ? 'switch OFF' : pumpOn ? 'running' : 'not running' }
+	];
+	if (fault) {
+		for (var i = 4; i <= 7; i++) leds[i].c = RED;
+		leds[8].c = RED; leds[8].blink = true; leds[8].t = 'no flow';
+	}
+	if (stale) leds.forEach(function(l) { l.c = YELLOW; l.t = 'data stale'; });
+	var op = v("Operating Status");
+	var note = op === "2" || op === "5" ? 'LEDs are off on the board (low battery)' : stale ? 'All yellow: a device the pump rule uses is not heard, pump off' : '';
+	if (!document.getElementById('gloria-led-blink-style')) {
+		var st = document.createElement('style');
+		st.id = 'gloria-led-blink-style';
+		st.textContent = '@keyframes gloriaLedBlink{0%,49%{opacity:1}50%,100%{opacity:.15}}';
+		document.head.appendChild(st);
+	}
+	function cell(l) {
+		var dot = l.c ? 'background:' + l.c + ';box-shadow:0 0 6px ' + l.c + ';' : 'background:#e3e6ea;border:1px solid #c8ccd2;';
+		return '<div style="width:50px;text-align:center;flex:0 0 auto;">' +
+			'<div style="width:18px;height:18px;border-radius:50%;margin:0 auto 3px auto;box-sizing:border-box;' + dot +
+			(l.blink ? 'animation:gloriaLedBlink 1s infinite;' : '') + '"></div>' +
+			'<div style="font-size:10px;font-weight:bold;color:#2c3e50;line-height:1.2;">' + l.name + '</div>' +
+			'<div style="font-size:9px;color:#888;line-height:1.2;">' + l.t + '</div></div>';
+	}
+	function group(from, to) { return '<div style="display:flex;">' + leds.slice(from, to).map(cell).join('') + '</div>'; }
+	return '<div style="display:flex;flex-wrap:wrap;justify-content:center;column-gap:14px;row-gap:8px;margin:2px 0 10px 0;">' +
+		group(0, 4) + group(4, 8) + group(8, 9) + '</div>' +
+		(note ? '<div style="text-align:center;font-size:11px;color:#9a7400;margin:-4px 0 8px 0;">' + note + '</div>' : '');
+}
+
 // Gloria, the solar pump controller (2026-11-26). Field names come from GloriaDataDeserializer.java (the "Purpose"
 // DeneWords: power and radio as Langley, plus the pump and the flow) and SensorSampleDeserializer.java: one Dene per
 // RS485 sensor, "Sensor <model> <address>" (the soil probes, the rain sensor), with its role, the kind of sample,
@@ -1120,7 +1174,8 @@ function buildGloriaContent(telepathon) {
 	html += (localTimeDW ? localTimeDW["Value"] : '') + '&nbsp;&nbsp;' + opLabel + (pumpModeDW ? '&nbsp;&nbsp;' + pumpModeDW["Value"] : '');
 	html += '</div>';
 	if (fault) html += '<div style="background:#c62828;color:#fff;border-radius:4px;padding:4px 8px;margin-bottom:8px;font-weight:bold;">Pump stopped: it ran with no flow (dry-run protection). Press START on Gloria or clear it on its page.</div>';
-	if (emergency) html += '<div style="background:#e67e22;color:#fff;border-radius:4px;padding:4px 8px;margin-bottom:8px;font-weight:bold;">Emergency switch in the emergency position: the pump cannot run.</div>';
+	if (emergency) html += '<div style="background:#e67e22;color:#fff;border-radius:4px;padding:4px 8px;margin-bottom:8px;font-weight:bold;">Main switch is OFF, pump will not run.</div>';
+	html += gloriaLedRow(pw);
 
 	html += '<ul class="nav nav-pills" style="margin-bottom:10px;">';
 	html += '<li class="active" onclick="return teleonomeShowTab(\'glo-status-' + safeId + '\', this)"><a href="#">Status</a></li>';
@@ -1159,7 +1214,7 @@ function buildGloriaContent(telepathon) {
 		plainRow('Mode', pumpModeDW) +
 		plainRow('Why', reasonDW) +
 		textRow('Dry-run fault', fault ? '<span style="color:#c62828;">yes</span>' : 'no') +
-		textRow('Emergency switch', emergency ? '<span style="color:#e67e22;">emergency position</span>' : 'normal') +
+		textRow('Main switch', emergency ? '<span style="color:#e67e22;">OFF</span>' : 'on') +
 		row('Flow Rate', flowDW, 'Purpose') +
 		plainRow('Flow Total (since start-up)', findDW(pw, 'Flow Total')) +
 		plainRow('RS485 Sensors', findDW(pw, 'RS485 Sensors')) +
