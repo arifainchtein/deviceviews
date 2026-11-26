@@ -48,7 +48,7 @@ function computeTelepathonAgeStatus(telepathon) {
 	} else if (deviceType === "Annabelle") {
 		// her status comes when something is new, and at least every 10 minutes (firmware 10)
 		statusColor = rangeColor(720, 1500);
-	} else if (deviceType === "Daffodil" || deviceType === "Langley") {
+	} else if (deviceType === "Daffodil" || deviceType === "Langley" || deviceType === "Gloria") {
 		if (opNum === "4") {
 			var cloudySleepDW = findPW("Sleep Time");
 			var cloudySleepSec = cloudySleepDW ? parseFloat(cloudySleepDW["Value"]) : null;
@@ -145,7 +145,7 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 	} else if (deviceType === "Annabelle") {
 		// her status comes when something is new, and at least every 10 minutes (firmware 10)
 		statusColor = rangeColor(720, 1500);
-	} else if (deviceType === "Daffodil" || deviceType === "Langley") {
+	} else if (deviceType === "Daffodil" || deviceType === "Langley" || deviceType === "Gloria") {
 		if (opNum === "4") {
 			var cloudySleepDW = findPW("Sleep Time");
 			var cloudySleepSec = cloudySleepDW ? parseFloat(cloudySleepDW["Value"]) : null;
@@ -186,7 +186,7 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 			'&nbsp;<span style="color:' + fishColorHex + ';font-weight:bold;">' + fishColor + '</span>' +
 			'&nbsp;&nbsp;' + sumpLabel + ': <span style="color:' + sumpColorHex + ';font-weight:bold;">' + sumpColor + '</span></span>';
 	} else {
-		if ((deviceType === "Daffodil" || deviceType === "Langley") && opStatusDW) {
+		if ((deviceType === "Daffodil" || deviceType === "Langley" || deviceType === "Gloria") && opStatusDW) {
 			var opLabel = daffodilOperatingStatusNames[opNum] || ('Mode ' + opNum);
 			var sleepStr = '';
 			if (opNum === "1" || opNum === "4" || opNum === "5") {
@@ -205,7 +205,7 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 			var panelVoltDW = findPW("Panel Voltage");
 			var panelCurrDW = findPW("Panel Current");
 			if (panelVoltDW) extras.push('P: ' + panelVoltDW["Value"] + 'V' + (panelCurrDW ? ' ' + panelCurrDW["Value"] + 'mA' : ''));
-		} else if (deviceType === "Langley") {
+		} else if (deviceType === "Langley" || deviceType === "Gloria") {
 			var battCurrDW = findPW("Battery Current");
 			if (battDW) extras.push('B: ' + battDW["Value"] + 'V' + (battCurrDW ? ' ' + battCurrDW["Value"] + 'mA' : ''));
 			var solarVoltDW = findPW("Solar Voltage");
@@ -302,6 +302,18 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 			}
 		} else if (deviceType === "Langley") {
 			addPart('Fence', findPW("Fence Voltage Avg"));
+		} else if (deviceType === "Gloria") {
+			// the pump, its flow, and the first soil probe's moisture (SensorSampleDeserializer "Sensor ..." Denes)
+			var pumpOnDW = findPW("Pump On"), pumpFaultDW = findPW("Pump Fault");
+			if (pumpOnDW) parts.push('Pump:' + (pumpFaultDW && String(pumpFaultDW["Value"]) === "true" ? '<span style="color:#c62828;font-weight:bold;">FAULT</span>'
+				: (String(pumpOnDW["Value"]) === "true" ? '<span style="color:#27ae60;font-weight:bold;">ON</span>' : 'off')));
+			addPart('Flow', findPW("Flow Rate"));
+			for (var gsi = 0; gsi < denes.length; gsi++) {
+				if (String(denes[gsi]["Name"]).indexOf("Sensor ") !== 0) continue;
+				var gsw = denes[gsi]["DeneWords"] || [], moistDW = null;
+				for (var gwi = 0; gwi < gsw.length; gwi++) if (gsw[gwi]["Name"] === "Moisture") moistDW = gsw[gwi];
+				if (moistDW) { addPart('Soil', moistDW); break; }
+			}
 		} else if (deviceType === "Annabelle") {
 			parts.push(annabelleWeatherSummary(purposeWords));
 		} else if (deviceType === "Cleotilde") {
@@ -396,7 +408,7 @@ function buildTelepathonCardView(telepathon, idSuffix) {
 	// moved to the Diagnostics tab (Radio, Delivery) on 2026-11-02.
 	var badges = [];
 	if (usbJumperOn) badges.push('<span style="background:#c62828;color:#fff;border-radius:4px;padding:0 6px;">USB header connected</span>');
-	if (deviceType === "Daffodil" || deviceType === "Langley") {
+	if (deviceType === "Daffodil" || deviceType === "Langley" || deviceType === "Gloria") {
 		var vsWords = [];
 		for (var vdi = 0; vdi < denes.length; vdi++) if (denes[vdi]["Name"] === TELEPATHON_DENE_VITAL_SIGNS) vsWords = denes[vdi]["DeneWords"] || [];
 		var vsVal = function(n) {
@@ -453,6 +465,7 @@ function buildTelepathonDetailView(telepathon, idSuffix, deviceType) {
 	return deviceViewsNoGpsBanner(telepathon) + ((name === "Chinampa" || deviceType === "Chinampa") ? buildChinampaContent(telepathon, safeId) :
 		deviceType === "Daffodil" ? buildDaffodilContent(telepathon) :
 		deviceType === "Langley" ? buildLangleyContent(telepathon) :
+		deviceType === "Gloria" ? buildGloriaContent(telepathon) :
 		deviceType === "Annabelle" ? buildAnnabelleContent(telepathon) :
 		buildTelepathonDetailContent(telepathon));
 }

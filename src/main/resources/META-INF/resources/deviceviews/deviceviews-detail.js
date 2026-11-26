@@ -1038,6 +1038,210 @@ function buildLangleyContent(telepathon) {
 	return html;
 }
 
+// Gloria, the solar pump controller (2026-11-26). Field names come from GloriaDataDeserializer.java (the "Purpose"
+// DeneWords: power and radio as Langley, plus the pump and the flow) and SensorSampleDeserializer.java: one Dene per
+// RS485 sensor, "Sensor <model> <address>" (the soil probes, the rain sensor), with its role, the kind of sample,
+// where it was taken and the values. Gloria sent LangleyData before and showed as a Langley.
+function buildGloriaContent(telepathon) {
+	var denes = telepathon["Denes"] || [];
+	var purposeDene = null, configDene = null, sensorDenes = [];
+	for (var i = 0; i < denes.length; i++) {
+		if (denes[i]["Name"] === "Purpose") purposeDene = denes[i];
+		else if (denes[i]["Name"] === "Configuration") configDene = denes[i];
+		else if (String(denes[i]["Name"]).indexOf("Sensor ") === 0) sensorDenes.push(denes[i]);
+	}
+	var pw = purposeDene ? (purposeDene["DeneWords"] || []) : [];
+	var cw = configDene ? (configDene["DeneWords"] || []) : [];
+	var tpName = telepathon["Name"];
+	var safeId = tpName.replace(/[^a-zA-Z0-9]/g, '_');
+
+	function findDW(words, name) {
+		for (var fi = 0; fi < words.length; fi++) if (words[fi]["Name"] === name) return words[fi];
+		return null;
+	}
+	function graphBtns(deneName, dwName) {
+		var d = 'data-telepathonname="' + tpName + '" data-denename="' + deneName + '" data-denewordname="' + dwName + '"';
+		var c = 'btn btn-xs btn-default telepathon-history-value';
+		return '<button class="' + c + '" ' + d + ' data-range="3600000">1h</button> ' +
+			'<button class="' + c + '" ' + d + ' data-range="86400000">24h</button> ' +
+			'<button class="' + c + ' hidden-xs" ' + d + ' data-range="604800000">7d</button>';
+	}
+	function multiBtns(deneName, dwNames, dwUnits, title) {
+		var d = 'data-telepathonname="' + tpName + '" data-denename="' + deneName + '"' +
+			' data-denewordnames="' + dwNames.join(',') + '" data-denewordunits="' + dwUnits.join(',') + '" data-title="' + title + '"';
+		var c = 'btn btn-xs btn-primary telepathon-multi-history-value';
+		return '<button class="' + c + '" ' + d + ' data-range="3600000">1h</button> ' +
+			'<button class="' + c + '" ' + d + ' data-range="86400000">24h</button> ' +
+			'<button class="' + c + ' hidden-xs" ' + d + ' data-range="604800000">7d</button>';
+	}
+	function chartGroup(deneName, items) {
+		return '<div style="margin-bottom:8px;padding:6px 8px;background:#eef3fa;border-radius:6px;display:flex;align-items:center;flex-wrap:wrap;">' +
+			items.map(function(it) {
+				return '<span style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-right:22px;">' +
+					'<span style="font-size:12px;font-weight:bold;color:#2c3e50;margin-right:4px;">' + it.title + '</span>' +
+					multiBtns(deneName, it.dwNames, it.dwUnits, it.title) + '</span>';
+			}).join('') + '</div>';
+	}
+	function tile(label, val, unit, color) {
+		return '<div class="col-xs-4 col-sm-2" style="margin-bottom:8px;padding:2px;"><div style="border-radius:10px;overflow:hidden;">' +
+			'<div style="padding:8px 4px;color:white;text-align:center;background:' + color + ';">' +
+			'<div style="font-size:9px;text-transform:uppercase;font-weight:bold;opacity:0.9;">' + label + '</div>' +
+			'<div style="font-size:16px;font-weight:800;">' + val + unit + '</div></div></div></div>';
+	}
+	function row(label, dw, deneName) {
+		if (!dw) return '';
+		return '<tr><td style="width:40%;">' + label + '</td><td><strong>' + dw["Value"] + (dw["Units"] ? ' ' + dw["Units"] : '') + '</strong></td>' +
+			'<td style="text-align:right;white-space:nowrap;padding:2px 4px;">' + graphBtns(deneName, dw["Name"]) + '</td></tr>';
+	}
+	function plainRow(label, dw) {
+		if (!dw) return '';
+		return '<tr><td style="width:40%;">' + label + '</td><td><strong>' + dw["Value"] + (dw["Units"] ? ' ' + dw["Units"] : '') + '</strong></td><td></td></tr>';
+	}
+	function textRow(label, text) {
+		return '<tr><td style="width:40%;">' + label + '</td><td><strong>' + text + '</strong></td><td></td></tr>';
+	}
+	function table(rows) {
+		return '<table class="table table-condensed table-striped" style="margin-bottom:0;font-size:12px;">' + rows + '</table>';
+	}
+	function isTrue(dw) { return dw && String(dw["Value"]) === "true"; }
+
+	var localTimeDW = findDW(pw, "Local Time");
+	var opStatusDW = findDW(pw, "Operating Status");
+	var opNum = opStatusDW ? String(parseInt(opStatusDW["Value"])) : null;
+	var opLabel = opNum !== null ? (daffodilOperatingStatusNames[opNum] || ('Mode ' + opNum)) : '—';
+	var pumpOnDW = findDW(pw, "Pump On"), pumpModeDW = findDW(pw, "Pump Mode"), faultDW = findDW(pw, "Pump Fault");
+	var emergencyDW = findDW(pw, "Emergency Switch Open"), reasonDW = findDW(pw, "Pump Reason");
+	var flowDW = findDW(pw, "Flow Rate"), battDW = findDW(pw, "Battery Voltage"), solarDW = findDW(pw, "Solar Voltage");
+	var rssiDW = findDW(pw, "rssi");
+	var pumpOn = isTrue(pumpOnDW), fault = isTrue(faultDW), emergency = isTrue(emergencyDW);
+
+	var html = '<div style="background:white;">';
+	html += '<div style="padding:2px 0 10px 0;margin-top:-8px;border-bottom:1px solid #eee;margin-bottom:10px;font-size:13px;color:#888;">';
+	html += (localTimeDW ? localTimeDW["Value"] : '') + '&nbsp;&nbsp;' + opLabel + (pumpModeDW ? '&nbsp;&nbsp;' + pumpModeDW["Value"] : '');
+	html += '</div>';
+	if (fault) html += '<div style="background:#c62828;color:#fff;border-radius:4px;padding:4px 8px;margin-bottom:8px;font-weight:bold;">Pump stopped: it ran with no flow (dry-run protection). Press START on Gloria or clear it on its page.</div>';
+	if (emergency) html += '<div style="background:#e67e22;color:#fff;border-radius:4px;padding:4px 8px;margin-bottom:8px;font-weight:bold;">Emergency switch in the emergency position: the pump cannot run.</div>';
+
+	html += '<ul class="nav nav-pills" style="margin-bottom:10px;">';
+	html += '<li class="active" onclick="return teleonomeShowTab(\'glo-status-' + safeId + '\', this)"><a href="#">Status</a></li>';
+	html += '<li onclick="return teleonomeShowTab(\'glo-config-' + safeId + '\', this)"><a href="#">Config</a></li>';
+	html += '</ul><div class="tab-content">';
+
+	html += '<div class="tab-pane active" id="glo-status-' + safeId + '">';
+	html += '<div class="row" style="margin-bottom:8px;">';
+	html += tile('Pump', pumpOn ? 'ON' : 'off', '', fault ? '#c62828' : (pumpOn ? '#27ae60' : '#7f8c8d'));
+	if (flowDW) html += tile('Flow', parseFloat(flowDW["Value"]).toFixed(1), ' L/m', '#3498db');
+	// the first soil probe's moisture, when there is one
+	for (var si = 0; si < sensorDenes.length; si++) {
+		var m = findDW(sensorDenes[si]["DeneWords"] || [], "Moisture");
+		if (m) { html += tile('Soil Moisture', parseFloat(m["Value"]).toFixed(1), '%', '#8e6e3b'); break; }
+	}
+	if (battDW) html += tile('Battery', battDW["Value"], 'V', '#3498db');
+	if (solarDW) html += tile('Solar', solarDW["Value"], 'V', '#3498db');
+	if (rssiDW) { var rv = parseFloat(rssiDW["Value"]); html += tile('Signal', rssiDW["Value"], '', rv > -95 ? '#27ae60' : '#f39c12'); }
+	html += '</div>';
+
+	var pill = 'font-size:12px;padding:3px 9px;';
+	html += '<ul class="nav nav-pills" style="margin-bottom:8px;flex-wrap:wrap;">';
+	html += '<li class="active" onclick="return teleonomeShowTab(\'glo-pump-' + safeId + '\', this)"><a href="#" style="' + pill + '">Pump</a></li>';
+	html += '<li onclick="return teleonomeShowTab(\'glo-soil-' + safeId + '\', this)"><a href="#" style="' + pill + '">Soil &amp; Rain</a></li>';
+	html += '<li onclick="return teleonomeShowTab(\'glo-power-' + safeId + '\', this)"><a href="#" style="' + pill + '">Power</a></li>';
+	html += '<li onclick="return teleonomeShowTab(\'glo-mount-' + safeId + '\', this)"><a href="#" style="' + pill + '">Solar Mount</a></li>';
+	html += '<li onclick="return teleonomeShowTab(\'glo-comms-' + safeId + '\', this)"><a href="#" style="' + pill + '">Comms</a></li>';
+	html += '<li onclick="return teleonomeShowTab(\'glo-diag-' + safeId + '\', this)"><a href="#" style="' + pill + '">Diagnostics</a></li>';
+	html += '</ul><div class="tab-content">';
+
+	// Pump: what the pump does and why, and the flow
+	html += '<div class="tab-pane active" id="glo-pump-' + safeId + '">';
+	html += chartGroup('Purpose', [{ title: "Flow Chart", dwNames: ["Flow Rate"], dwUnits: ["L/min"] }]);
+	html += table(
+		textRow('Pump', pumpOn ? 'ON' : 'off') +
+		plainRow('Mode', pumpModeDW) +
+		plainRow('Why', reasonDW) +
+		textRow('Dry-run fault', fault ? '<span style="color:#c62828;">yes</span>' : 'no') +
+		textRow('Emergency switch', emergency ? '<span style="color:#e67e22;">emergency position</span>' : 'normal') +
+		row('Flow Rate', flowDW, 'Purpose') +
+		plainRow('Flow Total (since start-up)', findDW(pw, 'Flow Total')) +
+		plainRow('RS485 Sensors', findDW(pw, 'RS485 Sensors')) +
+		plainRow('RS485 Sensors Missing', findDW(pw, 'RS485 Sensors Missing')));
+	html += '</div>';
+
+	// Soil & Rain: one block per RS485 sensor, from its newest sample
+	html += '<div class="tab-pane" id="glo-soil-' + safeId + '">';
+	if (!sensorDenes.length) {
+		html += '<p class="text-muted" style="padding:10px;">No sensor samples yet. Gloria sends one per identified sensor every 10 minutes.</p>';
+	}
+	var META = ["Source Device", "Source Serial Number", "Sensor Model", "Sensor Address", "Role", "Sample Kind", "Sample Id",
+		"Seconds Time", "Local Time", "Invalid Time", "Source Original Time", "Latitude", "longitude", "altitude", "Position Source",
+		"HDOP", "rssi", "snr"];
+	sensorDenes.forEach(function(sd) {
+		var w = sd["DeneWords"] || [];
+		var deneName = sd["Name"];
+		var role = findDW(w, "Role"), kind = findDW(w, "Sample Kind"), lt = findDW(w, "Local Time");
+		var lat = findDW(w, "Latitude"), lon = findDW(w, "longitude"), pos = findDW(w, "Position Source");
+		var valueWords = w.filter(function(x) { return META.indexOf(x["Name"]) < 0; });
+		var title = (role && role["Value"] !== "Other" ? role["Value"] + ' · ' : '') + deneName.replace(/^Sensor /, '') +
+			(kind && kind["Value"] === "test" ? ' · <span style="color:#e67e22;">bench test</span>' : '');
+		html += '<div style="margin:6px 0 10px 0;border:1px solid #e3e8ee;border-radius:6px;padding:6px 8px;">';
+		html += '<div style="font-weight:bold;color:#2c3e50;font-size:13px;">' + title + '</div>';
+		html += '<div style="font-size:11px;color:#888;margin-bottom:4px;">' + (lt ? lt["Value"] : '') +
+			(lat && lon ? '&nbsp;&nbsp;' + parseFloat(lat["Value"]).toFixed(5) + ', ' + parseFloat(lon["Value"]).toFixed(5) +
+				(pos ? ' (' + pos["Value"] + ')' : '') : '') + '</div>';
+		var names = valueWords.map(function(x) { return x["Name"]; }), units = valueWords.map(function(x) { return x["Units"] || ""; });
+		if (names.length > 1) html += chartGroup(deneName, [{ title: "Chart", dwNames: names.slice(0, 4), dwUnits: units.slice(0, 4) }]);
+		html += table(valueWords.map(function(x) { return row(x["Name"], x, deneName); }).join(''));
+		html += '</div>';
+	});
+	html += '</div>';
+
+	// Power: how Gloria powers itself
+	html += '<div class="tab-pane" id="glo-power-' + safeId + '">';
+	html += chartGroup('Purpose', [
+		{ title: "Power Chart", dwNames: ["Solar Voltage", "Battery Voltage", "Battery Current", "Solar Current"], dwUnits: ["V", "V", "mA", "mA"] },
+		{ title: "Battery Chart", dwNames: ["Battery Voltage", "Battery Current"], dwUnits: ["V", "mA"] }]);
+	var powerRows = row('Solar Voltage', solarDW, 'Purpose') + row('Solar Current', findDW(pw, 'Solar Current'), 'Purpose') +
+		row('Battery Voltage', battDW, 'Purpose') + row('Battery Current', findDW(pw, 'Battery Current'), 'Purpose') +
+		row('Battery Temperature', findDW(pw, 'Battery Temperature'), 'Purpose');
+	var socVal = DeviceViewsHost.setting(tpName, DENEWORD_PULSE_TASK_BATTERY_SOC_LIVE);
+	if (socVal !== null && socVal !== undefined) powerRows += textRow('Battery SOC', parseFloat(socVal).toFixed(1) + '%');
+	powerRows += row('Overnight Use', findDW(pw, 'Overnight Mah'), 'Purpose') + row('Estimated Runtime', findDW(pw, 'Estimated Runtime'), 'Purpose');
+	if (opStatusDW) powerRows += textRow('Operating Status', opLabel);
+	html += table(powerRows);
+	html += '</div>';
+
+	html += '<div class="tab-pane" id="glo-mount-' + safeId + '">' + buildSolarMountPanel(telepathon) + '</div>';
+
+	html += '<div class="tab-pane" id="glo-comms-' + safeId + '">';
+	html += table(row('rssi', rssiDW, 'Purpose') + row('snr', findDW(pw, 'snr'), 'Purpose') +
+		plainRow('Sent By', findDW(pw, 'Sent By')) + plainRow('Routes', findDW(pw, 'Routes')) +
+		plainRow('Relay Status', findDW(pw, 'Relay Status')) + plainRow('Wifi Status', findDW(pw, 'Wifi Status')));
+	html += '</div>';
+
+	// Diagnostics: vital signs (Gloria.ino buildI2CStatusMask bits), the board, the firmware
+	var hardwareHtml = table(row('Internal Temperature', findDW(pw, 'Internal Temperature'), 'Purpose') +
+		row('RTC Battery Voltage', findDW(pw, 'RTC Battery Voltage'), 'Purpose') + plainRow('Local Time', localTimeDW));
+	html += '<div class="tab-pane" id="glo-diag-' + safeId + '">';
+	html += buildDiagnosticsSubTabs('glo-diag-' + safeId,
+		buildVitalSignsPanel(telepathon, tpName, ["INA219 Solar", "INA219 Battery", "ADS1115 Config (U1)", "ADS1115 Sensors (U2)",
+			"MCP9808 Board", "OLED", "Config Expander"], "Gloria"),
+		hardwareHtml,
+		buildDeviceIdentityPanel(telepathon, "Gloria"));
+	html += '</div>';
+
+	html += '</div>'; // sub tab-content
+	html += '</div>'; // status pane
+
+	html += '<div class="tab-pane" id="glo-config-' + safeId + '">';
+	html += '<table class="table table-condensed table-striped" style="font-size:13px;">';
+	for (var ci = 0; ci < cw.length; ci++) {
+		html += '<tr><td style="width:50%;">' + cw[ci]["Name"] + '</td><td><strong>' + cw[ci]["Value"] + (cw[ci]["Units"] ? ' ' + cw[ci]["Units"] : '') + '</strong></td></tr>';
+	}
+	html += '</table></div>';
+	html += '</div>'; // tab-content
+	html += '</div>';
+	return html;
+}
+
 function buildTelepathonDetailContent(telepathon) {
 	var denes = telepathon["Denes"] || [];
 	if (denes.length === 0) return '<p class="text-muted text-center" style="padding:20px;">No data available.</p>';
